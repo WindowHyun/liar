@@ -31,6 +31,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # electron-builder는 릴리즈를 만들지만 설명은 비워 둔다. 받는 사람이 가장 먼저
+      # 보는 자리라 사용법을 채워 넣는다. 빌드가 실패해도 시도한다.
+      - name: 릴리즈 설명 채우기
+        if: always()
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release edit "v$VERSION" \
+            --title "v$VERSION - 켜면 자동으로 모이는 라이어 게임" \
+            --notes-file docs/release-notes.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # 릴리즈가 실패해도 결과물은 받아 볼 수 있게 남긴다.
       - uses: actions/upload-artifact@v4
         if: always()
