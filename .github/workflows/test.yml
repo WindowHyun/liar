@@ -1,0 +1,25 @@
+name: test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # 화면 테스트는 실제 Chromium으로 돈다.
+      - run: npx playwright install --with-deps chromium
+
+      # 자동 발견 테스트는 UDP 브로드캐스트가 되어야 한다. GitHub 러너에서는 되지만,
+      # 안 되는 환경이라면 이 스텝만 빼고 나머지를 돌리면 된다.
+      - run: npm test

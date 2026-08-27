@@ -289,7 +289,7 @@ function w14_twoPlayers() {
   const { room, players } = makeRoom(['A', 'B'], 0);
   const reason = room.start();
   check('W14 [요청] 2명이면 시작된다', reason === null, reason || 'OK');
-  const [a, b] = idsOf(players);
+  const [a] = idsOf(players);
   room.callVote(a);
   room.respondProposal(a, true);
   check('W14 2명 중 1명 찬성이면 50%라 진행', room.stateFor(a).phase === 'voting', room.stateFor(a).phase);

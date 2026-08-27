@@ -51,6 +51,9 @@ function createRoom(options) {
   const players = new Map(); // playerId -> { id, token, nickname, connected, joinedAt }
   const chat = [];
   const recentWords = [];
+  // [S-3] 몇 판 했는지, 라이어와 시민이 각각 몇 번 이겼는지. 방이 살아 있는 동안 쌓인다.
+  // (개표 함수 tally()와 헷갈리지 않게 record로 둔다)
+  const record = { rounds: 0, liarWins: 0, citizenWins: 0 };
 
   // lobby | playing | proposal | voting | guess | result
   //   proposal: 누가 투표 버튼을 누르면, 정말 투표로 갈지 다 같이 O/X로 정하는 단계
@@ -401,6 +404,10 @@ function createRoom(options) {
       liar: { id: round.liarId, nickname: nameOf(round.liarId) },
       accused: round.accusedId ? { id: round.accusedId, nickname: nameOf(round.accusedId) } : null,
     }, extra || {});
+    record.rounds += 1;
+    if (winner === 'liar') record.liarWins += 1;
+    else if (winner === 'citizens') record.citizenWins += 1;
+
     phase = 'result';
     round = null;
     changed();
@@ -455,6 +462,7 @@ function createRoom(options) {
         total: activeRoster().length,
       } : null,
       result,
+      record,
       chat,
       canStart: (phase === 'lobby' || phase === 'result') && connectedPlayers().length >= MIN_PLAYERS,
     };

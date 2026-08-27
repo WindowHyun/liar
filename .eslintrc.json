@@ -1,0 +1,24 @@
+{
+  "root": true,
+  "env": { "node": true, "es2022": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
+  "extends": "eslint:recommended",
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-empty": ["error", { "allowEmptyCatch": true }],
+    "eqeqeq": ["error", "smart"],
+    "prefer-const": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["test/**/*.js"],
+      "env": { "browser": true, "node": true }
+    },
+    {
+      "files": ["web/public/*.js"],
+      "env": { "browser": true, "node": false },
+      "parserOptions": { "ecmaVersion": 5 },
+      "globals": { "WebSocket": "readonly" }
+    }
+  ]
+}

@@ -9,14 +9,16 @@
     "electron": "electron .",
     "web": "node web/server.js",
     "test": "node test/run-all.js",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "lint": "eslint . --ext .js"
   },
   "dependencies": {
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^44.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "eslint": "^8.57.0"
   },
   "build": {
     "appId": "com.windowhyun.liar",

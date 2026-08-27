@@ -17,6 +17,11 @@ const { validateClientMessage } = require('./protocol');
 const { log, warn } = require('../logger');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// [S-2] 한 사람이 보낼 수 있는 요청 수 제한. 악의가 아니라 화면 쪽 버그로도
+// 무한 루프가 돌 수 있다. 넉넉하게 잡되 폭주는 끊는다.
+const RATE_WINDOW_MS = 5000;
+const RATE_MAX = 60;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -73,7 +78,7 @@ function createGameServer(options) {
   }
 
   function handleConnection(ws) {
-    const client = { ws, playerId: null };
+    const client = { ws, playerId: null, windowStart: 0, count: 0 };
     clients.add(client);
 
     // 듣는 사람이 없으면 소켓 오류 하나로 프로세스 전체가 죽는다.
@@ -86,6 +91,21 @@ function createGameServer(options) {
     });
 
     ws.on('message', (raw) => {
+      // [S-2] 창 하나가 서버를 독차지하지 못하게 한다.
+      const now = Date.now();
+      if (now - client.windowStart > RATE_WINDOW_MS) {
+        client.windowStart = now;
+        client.count = 0;
+      }
+      client.count += 1;
+      if (client.count > RATE_MAX) {
+        if (client.count === RATE_MAX + 1) {
+          warn(`[속도 제한] ${client.playerId || '미참가'} 연결이 너무 많이 보냅니다 - 잠시 무시합니다`);
+          sendTo(ws, { type: 'error', message: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' });
+        }
+        return;
+      }
+
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
 
@@ -124,13 +144,31 @@ function createGameServer(options) {
     });
   }
 
+  /**
+   * [S-1] Origin 검사. 브라우저가 보내는 Origin만 본다.
+   *   - 브라우저 버전: 이 서버가 내려준 페이지 → 이 서버의 주소
+   *   - Electron 버전: 로컬 화면 서버 → http://127.0.0.1:<포트>
+   *   - Node 클라이언트(테스트 등)는 Origin을 안 보내므로 통과시킨다
+   */
+  function allowOrigin(info) {
+    const origin = info.origin;
+    if (!origin) return true; // 브라우저가 아닌 클라이언트
+    if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) return true;
+    // 같은 LAN에서 이 서버 주소로 직접 들어온 경우
+    if (/^https?:\/\/\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(origin)) return true;
+    warn(`[접속 거절] 허용되지 않은 출처: ${origin}`);
+    return false;
+  }
+
   function start() {
     return new Promise((resolve, reject) => {
       if (server) { resolve(); return; }
 
       room = createRoom({ onChange: broadcastState });
       server = http.createServer(handleHttp);
-      wss = new WebSocketServer({ server });
+      // [S-1] 이 서버는 자기가 내려준 화면(같은 출처)이나 Electron 창(로컬 출처)만
+      // 상대한다. 참가자가 열어 둔 아무 웹페이지가 붙어 오는 것(CSWSH)을 막는다.
+      wss = new WebSocketServer({ server, verifyClient: allowOrigin });
       wss.on('connection', handleConnection);
 
       // ws는 http 서버의 error를 WebSocketServer로도 다시 올린다. 한쪽만 들으면

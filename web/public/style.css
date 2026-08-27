@@ -65,3 +65,49 @@ input:disabled { opacity:0.5; }
 #banner { font-size:13px; padding:8px 20px; text-align:center; }
 #banner.warn { background:#FCEBEB; color:#791F1F; }
 #banner.ok { background:#EAF3DE; color:#27500A; }
+
+/* ───────────────────────── 좁은 화면 [S-4] ─────────────────────────
+   웹 버전은 참가자가 폰으로 붙을 수 있다. 가로 배치를 세로로 바꾸고,
+   참가자 목록은 접어서 대화에 자리를 내준다. */
+@media (max-width: 720px) {
+  #screen-game { flex-direction: column; height: 100dvh; }
+
+  #sidebar {
+    width: 100%;
+    flex-shrink: 0;
+    padding: 10px 14px;
+    max-height: 38vh;
+    overflow-y: auto;
+  }
+  #sidebar h2, #sidebar .sub { display: none; }        /* 상단바에 이미 있다 */
+  #sidebar .label { margin: 0 0 6px; }
+  #participant-list { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  #participant-list li { padding: 2px 0; }
+  #participant-list .tag { margin-left: 6px; }
+  #conn-hint { margin-top: 10px; padding-top: 8px; }
+
+  #main { flex: 1; min-height: 0; }
+  #topbar { padding: 10px 14px; }
+  #topbar h2 { font-size: 14px; }
+  #topbar-actions { gap: 6px; }
+  #start-btn, #vote-btn { padding: 0 10px; font-size: 12px; }
+
+  #role-card { margin: 10px 14px 0; padding: 10px 12px; }
+  #chat { padding: 10px 14px; }
+  #vote-panel, #guess-panel, #result-panel, #proposal-panel { margin: 10px 14px; padding: 12px; }
+  #composer { padding: 10px 14px; }
+
+  /* 손가락으로 누를 수 있는 크기로 */
+  #proposal-buttons { flex-direction: column; }
+  #proposal-buttons .ox { width: 100%; min-width: 0; padding: 14px 16px; }
+  #vote-buttons button { padding: 10px 14px; }
+  #guess-panel input { width: 100%; margin: 0 0 8px; }
+  #guess-panel button { width: 100%; margin: 0; }
+
+  #screen-join { margin: 32px 16px; padding: 24px 20px; }
+}
+
+/* 폰에서 입력창을 누르면 브라우저가 화면을 확대하는 것을 막는다(16px 미만이면 확대됨) */
+@media (max-width: 720px) {
+  #nickname-input, #chat-input, #guess-input { font-size: 16px; }
+}

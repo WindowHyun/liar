@@ -216,12 +216,23 @@ function renderParticipants(s) {
   });
 }
 
+/** [S-3] 이 방에서 지금까지의 전적. */
+function renderTally(s) {
+  var el = $('tally-label');
+  if (!s.record || s.record.rounds === 0) { el.textContent = ''; return; }
+  el.textContent = s.record.rounds + '판 · ' + LABELS.liar + ' ' + s.record.liarWins
+    + ' / 시민 ' + s.record.citizenWins;
+}
+
 function renderChat(s) {
   // 대화 내용은 서버가 통째로 보내 준다. 개수가 바뀔 때만 다시 그린다.
   if (s.chat.length === lastChatCount) return;
   lastChatCount = s.chat.length;
 
   var box = $('chat');
+  // [S-5] 위로 올려 읽던 중에 새 메시지가 오면 아래로 끌려가던 문제.
+  // 원래 맨 아래를 보고 있었을 때만 따라 내린다.
+  var wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   box.innerHTML = '';
   s.chat.forEach(function (m) {
     if (m.kind === 'system') {
@@ -240,7 +251,7 @@ function renderChat(s) {
     wrap.querySelector('.text').textContent = m.text;
     box.appendChild(wrap);
   });
-  box.scrollTop = box.scrollHeight;
+  if (wasAtBottom) box.scrollTop = box.scrollHeight;
 }
 
 function renderRoleCard(s) {
@@ -356,6 +367,7 @@ function render(s) {
   if (s.you) myId = s.you.id;
 
   renderParticipants(s);
+  renderTally(s);
   renderChat(s);
   renderRoleCard(s);
   renderProposalPanel(s);
