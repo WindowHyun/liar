@@ -1,6 +1,11 @@
 # 라이어 게임
 
-사무실에서 하는 라이어 게임. 실행 방법이 두 가지다.
+사무실에서 하는 라이어 게임.
+
+**➡️ [사용법 (exe / 웹 / 모바일)](docs/usage.md)** — 처음이라면 여기부터.
+
+[Releases](https://github.com/WindowHyun/liar/releases)에서 exe를 받아 각자 실행하면
+주소 입력 없이 자동으로 모인다. 아래는 개발자용 설명이다.
 
 ## Electron (권장) — 켜면 자동으로 모인다
 
@@ -65,6 +70,7 @@ npm run dist       # dist/Slack.exe (Windows portable)
 
 ## 문서
 
+- [docs/usage.md](docs/usage.md) — 사용법 (exe / 웹 / 모바일)
 - [electron/README.md](electron/README.md) — Electron 구조, 호스트 선출, 프록시 주의
 - [web/README.md](web/README.md) — 웹 버전 구조와 설계 원칙
 - [docs/remaining-work.md](docs/remaining-work.md) — 남은 작업

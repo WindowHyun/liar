@@ -1,6 +1,6 @@
 {
   "name": "liar-game",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "LAN 라이어 게임 - Electron(자동 발견) / 웹(서버 1대) 두 가지로 실행",
   "main": "electron/main.js",
@@ -9,7 +9,7 @@
     "electron": "electron .",
     "web": "node web/server.js",
     "test": "node test/run-all.js",
-    "dist": "electron-builder --win",
+    "dist": "electron-builder --win --publish never",
     "lint": "eslint . --ext .js"
   },
   "dependencies": {
@@ -44,7 +44,15 @@
       ]
     },
     "portable": {
-      "artifactName": "${productName}.exe"
-    }
+      "artifactName": "liar-game-${version}-win-x64.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "WindowHyun",
+        "repo": "liar",
+        "releaseType": "release"
+      }
+    ]
   }
 }
