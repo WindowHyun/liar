@@ -35,6 +35,7 @@ module.exports = `<!DOCTYPE html>
   #role-card { margin:14px 20px 0; padding:12px 16px; border-radius:8px; font-size:13px; }
   #role-card.citizen { background:#EAF3DE; color:#27500A; }
   #role-card.liar { background:#FCEBEB; color:#791F1F; }
+  #role-card.pending { background:#EDEDF0; color:#5B5B60; }
 
   #chat { flex:1; overflow-y:auto; padding:14px 20px; }
   .msg { display:flex; gap:10px; margin-bottom:14px; }
@@ -104,6 +105,20 @@ module.exports = `<!DOCTYPE html>
   let voteCountdownHandle = null;
 
   function $(id) { return document.getElementById(id); }
+
+  // 상단 배너는 여러 곳에서 쓰므로 한 곳으로 모은다. 이전 자동 숨김 타이머를 반드시
+  // 취소해야, 복구 배너가 사라지는 타이밍에 새로 뜬 경고까지 같이 지워지지 않는다.
+  let bannerHideHandle = null;
+  function showBanner(kind, text, autoHideMs) {
+    const banner = $('network-banner');
+    if (bannerHideHandle) { clearTimeout(bannerHideHandle); bannerHideHandle = null; }
+    banner.className = kind;
+    banner.textContent = text;
+    banner.classList.remove('hidden');
+    if (autoHideMs) {
+      bannerHideHandle = setTimeout(() => { banner.classList.add('hidden'); bannerHideHandle = null; }, autoHideMs);
+    }
+  }
 
   // [수정] 투표 후 채팅 제한 - 투표가 시작되면 잠그고, 다음 라운드가 시작될 때만 다시 연다.
   function setChatEnabled(enabled) {
@@ -188,6 +203,24 @@ module.exports = `<!DOCTYPE html>
         participants = state.list;
         renderParticipants();
         break;
+      case 'rolePending': {
+        // [P0-3] 새 라운드가 시작되면 이전 라운드의 역할·제시어를 화면에서 반드시 지운다.
+        // 안 지우면 제시어가 유실됐을 때 지난 라운드 제시어를 그대로 믿고 게임하게 된다.
+        const card = $('role-card');
+        card.className = 'pending';
+        card.textContent = '역할을 받는 중입니다...';
+        card.classList.remove('hidden');
+        break;
+      }
+      case 'roleMissing':
+        // [P0-3] 제시어가 끝내 안 왔다. 조용히 "제시어 없는 시민"으로 두지 않는다.
+        showBanner('warn', '제시어를 받지 못했습니다. 게임을 시작한 사람에게 다시 시작해 달라고 알려주세요.');
+        $('role-card').textContent = '제시어를 받지 못했습니다.';
+        break;
+      case 'wordDeliveryFailed':
+        // [P0-3] 호스트 화면: 특정 참가자에게 제시어가 전달되지 않았다.
+        showBanner('warn', (state.name || state.id) + '님에게 제시어를 전달하지 못했습니다. 그분은 이번 라운드를 진행할 수 없습니다.');
+        break;
       case 'roundStart':
         addSystemMessage('게임이 시작되었습니다.');
         roundParticipants = state.participants || [];
@@ -254,6 +287,7 @@ module.exports = `<!DOCTYPE html>
         const panel = $('result-panel');
         panel.classList.remove('hidden');
         const labels = {
+          hostLeft: '게임을 시작한 사람의 접속이 끊겨 라운드가 취소되었습니다.',
           tie: '투표가 동점이었습니다.',
           noVotes: '제한 시간 안에 아무도 투표하지 않았습니다.',
           wrongAccusation: '지목된 사람은 Oliveyoung이 아니었습니다.',
@@ -261,24 +295,24 @@ module.exports = `<!DOCTYPE html>
             ? 'Oliveyoung이 제시어를 맞혔습니다! ("' + state.guess + '")'
             : 'Oliveyoung이 제시어를 맞히지 못했습니다. ("' + state.guess + '")',
         };
-        panel.textContent = (state.winner === 'liar' ? 'Oliveyoung 승리! ' : '시민 팀 승리! ') + (labels[state.reason] || '');
+        const prefix = state.winner === 'liar' ? 'Oliveyoung 승리! '
+          : state.winner === 'citizens' ? '시민 팀 승리! '
+          : ''; // winner 'none' - 승패 없이 끝난 라운드
+        panel.textContent = prefix + (labels[state.reason] || '');
         break;
       }
       case 'networkIssue': {
-        const banner = $('network-banner');
         const detail = state.detail || {};
-        banner.classList.remove('hidden');
         if (detail.type === 'receiveLost') {
-          banner.className = 'warn';
-          banner.textContent = '네트워크 수신에 문제가 생겨 다시 연결하는 중입니다. 다른 참가자 화면에 내가 안 보일 수 있어요.';
+          showBanner('warn', '네트워크 수신에 문제가 생겨 다시 연결하는 중입니다. 다른 참가자 화면에 내가 안 보일 수 있어요.');
         } else if (detail.type === 'receiveRecovered') {
-          banner.className = 'ok';
-          banner.textContent = '네트워크 수신 기능이 복구되었습니다.';
-          setTimeout(() => banner.classList.add('hidden'), 4000);
+          showBanner('ok', '네트워크 수신 기능이 복구되었습니다.', 4000);
         } else if (detail.type === 'versionMismatch') {
-          banner.className = 'warn';
-          banner.textContent = '다른 참가자와 프로그램 버전이 다른 것 같습니다. 모두 같은 파일로 다시 받아주세요.';
+          showBanner('warn', '다른 참가자와 프로그램 버전이 다른 것 같습니다. 모두 같은 파일로 다시 받아주세요.');
+        } else if (detail.type === 'deliveryFailed') {
+          showBanner('warn', '일부 참가자에게 메시지가 전달되지 않았습니다(' + (detail.targetIp || '') + '). 그 사람 화면은 나와 다를 수 있어요.');
         }
+        // 처리할 수 없는 진단은 배너를 건드리지 않는다 - 빈 배너가 뜨지 않게.
         break;
       }
     }
