@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="screen-join">
+    <h1 data-label="app">Slack</h1>
+    <p>닉네임을 입력하고 접속하세요.</p>
+    <input id="nickname-input" placeholder="닉네임" maxlength="24" autocomplete="off" />
+    <button id="join-btn">접속</button>
+    <p class="hint">같은 주소로 접속한 사람끼리 함께 플레이합니다. 최소 3명이 필요합니다.</p>
+  </div>
+
+  <div id="screen-game" class="hidden">
+    <div id="sidebar">
+      <h2 data-label="app">Slack</h2>
+      <p class="sub">워크스페이스</p>
+      <p class="label">참가자 <span id="participant-count"></span></p>
+      <ul id="participant-list"></ul>
+      <p id="conn-hint"></p>
+    </div>
+
+    <div id="main">
+      <div id="banner" class="hidden"></div>
+
+      <div id="topbar">
+        <h2 id="channel-name" data-label="channel"># Oliveyoung</h2>
+        <div id="topbar-actions">
+          <button id="start-btn">게임 시작</button>
+          <button id="vote-btn" disabled>투표</button>
+        </div>
+      </div>
+
+      <div id="role-card" class="hidden"></div>
+      <div id="chat"></div>
+
+      <div id="vote-panel" class="hidden">
+        <p class="panel-title">
+          <span data-label="liar">Oliveyoung</span>이라고 생각하는 사람에게 투표하세요.
+          (남은 시간 <span id="vote-timer">30</span>초 · <span id="vote-count">0/0</span>명 투표함)
+        </p>
+        <div id="vote-buttons"></div>
+      </div>
+
+      <div id="guess-panel" class="hidden">
+        <p class="panel-title">
+          <span data-label="liar">Oliveyoung</span>으로 지목되었습니다. 제시어를 맞히면 역전승합니다.
+          (남은 시간 <span id="guess-timer">30</span>초)
+        </p>
+        <input id="guess-input" placeholder="제시어 입력" maxlength="60" autocomplete="off" />
+        <button id="guess-btn">제출</button>
+      </div>
+
+      <div id="result-panel" class="hidden"></div>
+
+      <div id="composer">
+        <input id="chat-input" placeholder="내 턴에 설명 입력..." maxlength="300" autocomplete="off" />
+        <button id="send-btn">설명 전송</button>
+      </div>
+    </div>
+  </div>
+
+<script src="app.js"></script>
+</body>
+</html>

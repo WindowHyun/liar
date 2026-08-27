@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "web": "node web/server.js",
     "test": "node test/run-all.js"
   },
   "dependencies": {

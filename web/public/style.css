@@ -1,0 +1,61 @@
+* { box-sizing: border-box; }
+body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif; background:#F5F5F7; color:#1D1C1D; }
+.hidden { display:none !important; }
+
+#screen-join { max-width:420px; margin:80px auto; background:#fff; border:1px solid #E4E4E6; border-radius:10px; padding:32px; }
+#screen-join h1 { font-size:22px; margin:0 0 8px; }
+#screen-join p { font-size:14px; color:#616061; margin:0 0 16px; }
+#screen-join .hint { font-size:12px; color:#8A8A8E; margin-top:14px; }
+#nickname-input { width:100%; height:38px; border:1px solid #D8D8DA; border-radius:6px; padding:0 12px; font-size:14px; margin-bottom:12px; }
+#join-btn { width:100%; height:40px; background:#3F0E40; color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer; }
+
+#screen-game { display:flex; height:100vh; }
+#sidebar { width:230px; background:#3F0E40; color:#fff; padding:20px 16px; flex-shrink:0; display:flex; flex-direction:column; }
+#sidebar h2 { font-size:15px; margin:0 0 4px; }
+#sidebar .sub { font-size:12px; color:#D1B3D6; margin:0 0 20px; }
+#sidebar .label { font-size:12px; color:#D1B3D6; margin:16px 0 6px; }
+#participant-list { list-style:none; padding:0; margin:0; font-size:14px; }
+#participant-list li { display:flex; align-items:center; gap:8px; padding:5px 0; }
+#participant-list .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#participant-list li.offline .name { color:#B695BC; text-decoration:line-through; }
+#participant-list li.spectator .name { color:#C5AECA; font-style:italic; }
+#participant-list .tag { margin-left:auto; font-size:10px; padding:1px 6px; border-radius:8px; background:#5A2A5C; color:#E4CDE8; flex-shrink:0; }
+#participant-list .tag.voted { background:#2BAC76; color:#fff; }
+#conn-hint { margin-top:auto; padding-top:16px; font-size:11px; color:#B695BC; line-height:1.5; }
+
+#main { flex:1; display:flex; flex-direction:column; min-width:0; }
+#topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid #E4E4E6; background:#fff; }
+#topbar h2 { font-size:15px; margin:0; }
+#topbar-actions { display:flex; gap:8px; }
+#start-btn { height:32px; padding:0 14px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; font-size:13px; cursor:pointer; }
+#vote-btn { background:#FCEBEB; color:#791F1F; border:1px solid #F0C7C7; border-radius:14px; height:32px; padding:0 14px; font-size:13px; font-weight:700; cursor:pointer; }
+button:disabled { opacity:0.45; cursor:default; }
+input:disabled { opacity:0.5; }
+
+#role-card { margin:14px 20px 0; padding:12px 16px; border-radius:8px; font-size:13px; }
+#role-card.citizen { background:#EAF3DE; color:#27500A; }
+#role-card.liar { background:#FCEBEB; color:#791F1F; }
+#role-card.pending { background:#EDEDF0; color:#5B5B60; }
+
+#chat { flex:1; overflow-y:auto; padding:14px 20px; }
+.msg { display:flex; gap:10px; margin-bottom:14px; }
+.msg .avatar { width:28px; height:28px; border-radius:6px; background:#7F77DD; color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.msg .name { font-size:13px; font-weight:700; }
+.msg .text { font-size:14px; margin-top:2px; word-break:break-word; }
+.sysmsg { font-size:12px; color:#8A8A8E; font-style:italic; margin-bottom:10px; }
+
+#composer { display:flex; gap:8px; padding:12px 20px; border-top:1px solid #E4E4E6; background:#fff; }
+#chat-input { flex:1; height:36px; border:1px solid #D8D8DA; border-radius:8px; padding:0 12px; font-size:13px; }
+#send-btn { height:36px; padding:0 14px; border:1px solid #D8D8DA; border-radius:8px; background:#fff; font-size:13px; cursor:pointer; }
+
+#vote-panel, #guess-panel, #result-panel { margin:14px 20px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; }
+.panel-title { margin:0 0 8px; font-size:13px; }
+#vote-buttons button, #guess-panel button { margin:4px 6px 0 0; padding:6px 12px; border-radius:6px; border:1px solid #D8D8DA; background:#F5F5F7; cursor:pointer; font-size:13px; }
+#guess-panel input { height:34px; border:1px solid #D8D8DA; border-radius:6px; padding:0 10px; font-size:13px; margin-right:6px; }
+#result-panel { font-size:15px; text-align:center; }
+#result-panel .headline { font-weight:700; font-size:17px; margin-bottom:6px; }
+#result-panel .detail { font-size:13px; color:#616061; }
+
+#banner { font-size:13px; padding:8px 20px; text-align:center; }
+#banner.warn { background:#FCEBEB; color:#791F1F; }
+#banner.ok { background:#EAF3DE; color:#27500A; }

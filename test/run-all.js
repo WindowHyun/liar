@@ -5,7 +5,11 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 
-const suites = ['transport-test.js', 'round-test.js', 'server-test.js', 'ui-test.js'];
+// LAN(UDP) 버전과 웹 버전 스위트를 모두 돌린다.
+const suites = [
+  'transport-test.js', 'round-test.js', 'server-test.js', 'ui-test.js',   // LAN 버전
+  'web-room-test.js', 'web-ui-test.js',                                   // 웹 버전
+];
 let failed = 0;
 
 for (const suite of suites) {
