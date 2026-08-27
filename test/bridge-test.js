@@ -19,12 +19,13 @@ let chromium;
 try {
   ({ chromium } = require('playwright'));
 } catch {
-  try {
-    ({ chromium } = require('/opt/node22/lib/node_modules/playwright'));
-  } catch {
-    console.log('Electron 브리지: Playwright가 없어 건너뜁니다.');
-    process.exit(0);
+  // CI에서 조용히 건너뛰면 "돌지도 않은 테스트"가 통과로 보인다. 거기서는 실패시킨다.
+  if (process.env.CI) {
+    console.error('Electron 브리지: Playwright가 설치되지 않았습니다. CI에서는 건너뛸 수 없습니다.');
+    process.exit(1);
   }
+  console.log('Electron 브리지: Playwright가 없어 건너뜁니다. (npm i 후 npx playwright install chromium)');
+  process.exit(0);
 }
 
 const PORT_A = 4181;

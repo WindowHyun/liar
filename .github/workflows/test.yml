@@ -8,8 +8,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      # 테스트는 Electron 창을 띄우지 않는다. 100MB짜리 바이너리를 받을 이유가 없다.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 이 값이 있으면 화면 테스트가 "Playwright 없음"으로 조용히 건너뛰지 않고 실패한다.
+      CI: true
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -20,6 +28,8 @@ jobs:
       # 화면 테스트는 실제 Chromium으로 돈다.
       - run: npx playwright install --with-deps chromium
 
-      # 자동 발견 테스트는 UDP 브로드캐스트가 되어야 한다. GitHub 러너에서는 되지만,
-      # 안 되는 환경이라면 이 스텝만 빼고 나머지를 돌리면 된다.
+      - run: npm run lint
+
+      # 자동 발견 테스트(discovery-test)는 UDP 브로드캐스트가 되어야 한다.
+      # 러너에서 안 되면 이 스위트만 빠지도록 test/run-all.js를 고칠 것.
       - run: npm test
