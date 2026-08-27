@@ -14,7 +14,7 @@
  */
 
 const path = require('path');
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const { createPeer, DEFAULT_PORT } = require('./peer');
 const { createUiServer } = require('./ui-server');
 const { log, error, LOG_PATH } = require('../logger');
@@ -74,6 +74,19 @@ function createWindow() {
 // 오히려 한 PC에서 둘을 띄워 테스트할 수 있어 편하다.
 
 app.whenReady().then(async () => {
+  // 이 앱은 바깥 인터넷에 나갈 일이 전혀 없다. 오직 같은 LAN의 호스트와 이 PC의 화면
+  // 서버에만 붙는다. 그런데 회사 PC처럼 시스템 프록시가 걸려 있으면 Chromium이 LAN
+  // 주소까지 프록시로 보내 버리고, 프록시는 그걸 거절한다(실제로 403이 떨어진다).
+  //   WebSocket connection to 'ws://192.0.2.2:55500/' failed:
+  //   Error during WebSocket handshake: Unexpected response code: 403
+  // 그러면 "내 화면은 되는데(루프백은 프록시를 안 탄다) 남에게는 안 붙는" 증상이 된다.
+  // 프록시를 아예 타지 않도록 못 박는다.
+  try {
+    await session.defaultSession.setProxy({ mode: 'direct' });
+  } catch (err) {
+    error(`[프록시 설정 실패] ${err.message} - 사내 프록시가 있으면 접속이 안 될 수 있습니다.`);
+  }
+
   uiServer = createUiServer();
   uiPort = await uiServer.start();
 

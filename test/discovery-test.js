@@ -17,7 +17,9 @@
 const path = require('path');
 const { spawn } = require('child_process');
 
-const PORT = 55500;
+// 실제 앱(55500)과 겹치면 돌고 있는 인스턴스를 4번째 참가자로 잡아 버린다.
+// 테스트는 전용 포트를 쓴다.
+const PORT = Number(process.env.LIAR_TEST_PORT) || 55599;
 const HELPER = path.join(__dirname, 'helpers', 'headless-peer.js');
 
 const results = [];
