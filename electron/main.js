@@ -31,6 +31,12 @@ function sendStatus(status) {
   mainWindow.webContents.send('server-changed', status.serverUrl);
 }
 
+/** [E-2] 버전이 다른 인스턴스를 봤다는 것을 화면에 알린다. */
+function sendNotice(notice) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('notice', notice);
+}
+
 function createWindow() {
   if (!uiPort) {
     error('[Electron] 화면 서버가 준비되지 않았습니다.');
@@ -90,7 +96,25 @@ app.whenReady().then(async () => {
   uiServer = createUiServer();
   uiPort = await uiServer.start();
 
-  peer = createPeer({ port: PORT, onStatus: sendStatus });
+  // [E-4] 화면은 로컬 파일만 쓴다. 외부에서 무엇도 불러오지 않도록 못 박는다.
+  // (이게 없으면 Electron이 렌더러 콘솔에 보안 경고를 계속 띄운다.)
+  // connect-src만 열어 두는 이유: 게임 서버가 다른 PC라 주소를 미리 알 수 없다.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: Object.assign({}, details.responseHeaders, {
+        'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src *"],
+      }),
+    });
+  });
+
+  peer = createPeer({
+    port: PORT,
+    onStatus: sendStatus,
+    onVersionMismatch: (d) => sendNotice({
+      kind: 'versionMismatch',
+      text: `다른 참가자와 프로그램 버전이 다릅니다(상대 v${d.peerVersion} / 나 v${d.myVersion}). 모두 같은 파일로 다시 받아주세요.`,
+    }),
+  });
   peer.start();
   log(`[Electron] 시작 (게임 포트 ${PORT}, 화면 포트 ${uiPort}, 로그: ${LOG_PATH})`);
 

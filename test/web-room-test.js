@@ -295,11 +295,69 @@ function w14_twoPlayers() {
   check('W14 2명 중 1명 찬성이면 50%라 진행', room.stateFor(a).phase === 'voting', room.stateFor(a).phase);
 }
 
+function w16_emptyRoundIsAbandoned() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+  check('W16 라운드가 진행 중이다', room._debug().phase === 'playing');
+
+  ids.forEach((id) => room.disconnect(id));
+  check('W16 [W-1] 전원이 나가면 라운드를 접고 로비로 돌아온다',
+    room._debug().phase === 'lobby', room._debug().phase);
+
+  const late1 = room.join({ nickname: '새참가자' });
+  const late2 = room.join({ nickname: '또다른참가자' });
+  const s = room.stateFor(late1.playerId);
+  check('W16 [W-1] 새로 들어온 사람이 관전자로 갇히지 않는다', s.you.inRound === false && s.phase === 'lobby');
+  check('W16 [W-1] 새 참가자들이 게임을 시작할 수 있다', room.start() === null && room._debug().phase === 'playing');
+
+  // 끊긴 유령은 시간이 지나면 목록에서 사라진다
+  advance(61000);
+  const names = room.stateFor(late2.playerId).players.map((p) => p.nickname);
+  check('W16 [W-1] 끊긴 유령이 목록에서 정리된다',
+    !names.includes('A') && !names.includes('B') && !names.includes('C'), names.join(', '));
+}
+
+function w17_emptyProposalDoesNotPass() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+  room.callVote(ids[0]);
+  check('W17 찬반 단계에 들어갔다', room._debug().phase === 'proposal');
+
+  ids.forEach((id) => room.disconnect(id));
+  check('W17 [W-2] 인원 0명이 50% 조건을 통과해 투표로 넘어가지 않는다',
+    room._debug().phase === 'lobby', room._debug().phase);
+}
+
+function w18_spectatorCannotChat() {
+  const { room, players } = makeRoom(['A', 'B'], 0); // 라이어 = A
+  room.start();
+  const [a, b] = idsOf(players);
+  const spectator = room.join({ nickname: '관전자' });
+
+  const reason = room.say(spectator.playerId, '저 사람 수상한데요');
+  check('W18 [W-3] 관전자는 진행 중인 판에 끼어들 수 없다',
+    typeof reason === 'string' && reason.includes('관전'), reason || '통과해버림');
+
+  // 라운드를 끝까지 진행한다 (서로 지목 → 동점 → 라이어 승)
+  passProposal(room, [a, b]);
+  room.vote(a, b);
+  room.vote(b, a);
+  check('W18 라운드가 끝났다', room._debug().phase === 'result', room._debug().phase);
+
+  check('W18 [W-3] 라운드가 끝나면 관전자도 대화할 수 있다',
+    room.say(spectator.playerId, '이제 말해도 되나요') === null);
+  check('W18 [W-3] 다음 라운드부터는 참가자로 들어간다',
+    room.start() === null && room.stateFor(spectator.playerId).you.inRound === true);
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
   w9_lateJoinerSpectates, w10_chatLock,
-  w11_proposalMajority, w12_proposalRejected, w13_proposalTimeout, w14_twoPlayers, w15_tokenSeatCollision]) {
+  w11_proposalMajority, w12_proposalRejected, w13_proposalTimeout, w14_twoPlayers, w15_tokenSeatCollision,
+  w16_emptyRoundIsAbandoned, w17_emptyProposalDoesNotPass, w18_spectatorCannotChat]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 

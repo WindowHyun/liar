@@ -2,18 +2,46 @@
   "name": "liar-game",
   "version": "0.5.0",
   "private": true,
-  "description": "LAN(UDP 브로드캐스트) 라이어 게임",
+  "description": "LAN 라이어 게임 - Electron(자동 발견) / 웹(서버 1대) 두 가지로 실행",
   "main": "electron/main.js",
   "scripts": {
-    "start": "node server.js",
-    "web": "node web/server.js",
+    "start": "electron .",
     "electron": "electron .",
-    "test": "node test/run-all.js"
+    "web": "node web/server.js",
+    "test": "node test/run-all.js",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "^44.0.0"
+    "electron": "^44.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.windowhyun.liar",
+    "productName": "Slack",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "web/**/*",
+      "logger.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "${productName}.exe"
+    }
   }
 }

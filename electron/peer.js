@@ -41,6 +41,7 @@ function createPeer(options) {
   const opts = options || {};
   const port = opts.port || DEFAULT_PORT;
   const onStatus = opts.onStatus || (() => {});
+  const onVersionMismatch = opts.onVersionMismatch || (() => {});
 
   const nodeId = opts.nodeId || crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
@@ -151,6 +152,7 @@ function createPeer(options) {
         nodeId,
         buildAnnounce: () => ({ isHost: hosting }),
         onChange: () => { applyElection(); },
+        onVersionMismatch, // [E-2] 화면에 "모두 같은 버전으로 받아주세요"를 띄우기 위해
       });
       discovery.start();
       electionTimer = setInterval(applyElection, ELECTION_TICK_MS);

@@ -26,6 +26,7 @@ var joined = false;
 var reconnectTimer = null;
 var reconnectDelay = 500;
 var tickTimer = null;
+var everConnected = false; // [E-1] 첫 접속과 호스트 인계를 구분하기 위해
 var serverOffset = 0; // 서버 시계 - 내 시계. 남은 시간을 정확히 세기 위해.
 var lastChatCount = 0;
 
@@ -87,6 +88,7 @@ function connect() {
   ws = new WebSocket(url);
 
   ws.onopen = function () {
+    everConnected = true;
     reconnectDelay = 500;
     hideBanner();
     $('conn-hint').textContent = '';
@@ -399,8 +401,20 @@ if (savedName && readToken()) {
 
 // Electron 버전에서 호스트가 바뀌면(먼저 켠 사람이 나가면) 붙을 주소가 달라진다.
 // 기존 연결을 정리하고 새 주소로 곧바로 다시 붙는다.
+// Electron이 올려 주는 알림(버전 불일치 등)을 배너로 띄운다.
+if (window.liar && typeof window.liar.onNotice === 'function') {
+  window.liar.onNotice(function (notice) {
+    if (notice && notice.text) showBanner('warn', notice.text);
+  });
+}
+
 if (window.liar && typeof window.liar.onServerChange === 'function') {
-  window.liar.onServerChange(function () {
+  window.liar.onServerChange(function (url) {
+    // [E-1] 호스트가 바뀌면 라운드 상태는 옛 호스트의 메모리와 함께 사라진다.
+    // 조용히 초기화되면 "왜 갑자기 처음이지?"가 되므로 이유를 알려 준다.
+    if (url && everConnected) {
+      showBanner('warn', '게임을 진행하던 사람의 접속이 끊겨 다른 PC가 이어받았습니다. 라운드는 처음부터 다시 시작합니다.', 8000);
+    }
     if (ws) {
       ws.onclose = null; // 자동 재연결 경로가 겹치지 않게
       try { ws.close(); } catch (e) { /* 이미 닫힘 */ }

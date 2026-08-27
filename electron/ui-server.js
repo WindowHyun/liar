@@ -17,6 +17,19 @@ const path = require('path');
 const { warn } = require('../logger');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'web', 'public');
+
+/**
+ * [E-6] 화면 서버 포트를 고정한다.
+ *
+ * 예전에는 빈 포트를 OS가 골라 주게 했는데(listen(0)), 그러면 앱을 켤 때마다 출처가
+ * http://127.0.0.1:33329 → :39343 처럼 바뀐다. localStorage는 출처마다 따로라서
+ * 저장해 둔 닉네임과 토큰을 못 읽고, 앱을 다시 켤 때마다 닉네임을 새로 입력해야 했다.
+ *
+ * 같은 PC에서 두 번 실행하면 첫 번째가 이 포트를 쓰고 있으므로, 그때는 다음 번호로
+ * 넘어간다. 두 번째 창은 출처가 달라 닉네임을 다시 넣어야 하지만, 흔한 경우가 아니다.
+ */
+const BASE_PORT = 55510;
+const MAX_TRIES = 10;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -27,9 +40,10 @@ function createUiServer() {
   let server = null;
 
   return {
-    /** 빈 포트를 하나 잡아서 연다. 실제로 잡힌 포트 번호를 돌려준다. */
+    /** 고정 포트부터 순서대로 시도한다. 실제로 잡힌 포트 번호를 돌려준다. */
     start() {
       return new Promise((resolve, reject) => {
+        let attempt = 0;
         server = http.createServer((req, res) => {
           const requested = (req.url || '/').split('?')[0];
           const name = requested === '/' ? 'index.html' : path.basename(requested);
@@ -48,11 +62,16 @@ function createUiServer() {
         });
 
         server.on('error', (err) => {
+          if (err.code === 'EADDRINUSE' && attempt < MAX_TRIES) {
+            // 같은 PC에서 이미 하나가 떠 있다. 다음 번호로 넘어간다.
+            attempt += 1;
+            server.listen(BASE_PORT + attempt, '127.0.0.1');
+            return;
+          }
           warn(`[화면 서버] ${err.code || ''} ${err.message}`);
           reject(err);
         });
-        // 포트 0 = 비어 있는 포트를 OS가 골라 준다. 같은 PC에서 두 번 실행해도 겹치지 않는다.
-        server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+        server.listen(BASE_PORT, '127.0.0.1', () => resolve(server.address().port));
       });
     },
 

@@ -32,6 +32,7 @@ const PROPOSAL_MS = 20000;      // 투표를 진행할지 묻는 찬반(O/X) 제
 const VOTE_MS = 30000;          // 투표 제한 시간
 const GUESS_MS = 30000;         // 라이어가 제시어를 맞힐 제한 시간
 const LOBBY_DROP_MS = 10000;    // 로비에서 끊긴 사람을 목록에서 지우기까지
+const ROUND_DROP_MS = 60000;    // 라운드 중에는 더 기다린다 - 잠깐 끊겼다 돌아올 수 있으므로
 const CHAT_MAX = 100;           // 재접속한 사람에게도 보여줄 최근 대화 수
 const RECENT_WORDS_MAX = 8;
 
@@ -82,6 +83,27 @@ function createRoom(options) {
 
   function inRound(playerId) {
     return !!round && round.roster.some((r) => r.id === playerId);
+  }
+
+  /**
+   * [W-1] 라운드 중에 접속자가 한 명도 남지 않으면 그 라운드를 접고 로비로 되돌린다.
+   *
+   * 예전에는 이걸 풀어 주는 것이 아무것도 없었다. 라운드 중에는 자리를 남겨 두는데
+   * (돌아올 수 있으니까) 아무도 돌아오지 않으면 phase가 'playing'인 채로 굳어서,
+   * 이후 들어오는 사람은 영원히 관전자가 되고 게임을 시작할 수도 없었다.
+   * 서버를 다시 켜야만 풀렸다.
+   */
+  function abandonRoundIfEmpty() {
+    if (phase === 'lobby' || phase === 'result') return false;
+    if (connectedPlayers().length > 0) return false;
+
+    clearPhaseTimer();
+    round = null;
+    result = null;
+    phase = 'lobby';
+    chat.push({ kind: 'system', text: '참가자가 모두 나가 라운드가 취소되었습니다.', at: now() });
+    trimChat();
+    return true;
   }
 
   function pickWord() {
@@ -138,16 +160,19 @@ function createRoom(options) {
     if (!player || !player.connected) return;
     player.connected = false;
 
-    // 라운드 중이면 자리를 남겨 둔다(돌아올 수 있다). 로비에서는 잠시 뒤 목록에서 지운다.
-    if (phase === 'lobby' || phase === 'result') {
-      setTimer(() => {
-        const still = players.get(playerId);
-        if (still && !still.connected) {
-          players.delete(playerId);
-          changed();
-        }
-      }, LOBBY_DROP_MS);
-    }
+    // [W-1] 목록에서 지우는 타이머는 언제나 건다. 예전에는 로비에서만 걸어서, 라운드 중에
+    // 끊긴 사람이 영영 유령으로 남았다. 라운드 중에는 더 오래 기다린다(돌아올 수 있으므로).
+    const dropAfter = (phase === 'lobby' || phase === 'result') ? LOBBY_DROP_MS : ROUND_DROP_MS;
+    setTimer(() => {
+      const still = players.get(playerId);
+      if (!still || still.connected) return;
+      players.delete(playerId);
+      // 이 사람이 마지막이었을 수도 있다.
+      if (!abandonRoundIfEmpty() && phase === 'voting') maybeTally();
+      else changed();
+    }, dropAfter);
+
+    if (abandonRoundIfEmpty()) { changed(); return; }
 
     // 나간 사람을 계속 기다리면 투표가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
@@ -197,6 +222,11 @@ function createRoom(options) {
     if (phase === 'voting' || phase === 'guess') return '지금은 대화할 수 없습니다.';
     const player = players.get(playerId);
     if (!player) return '참가자가 아닙니다.';
+    // [W-3] 라운드 도중에 들어온 사람은 관전자다. 제시어를 모르니 정보가 새지는 않지만,
+    // 참가자와 구분 없이 말풍선이 떠서 판을 흐린다.
+    if (phase !== 'lobby' && phase !== 'result' && !inRound(playerId)) {
+      return '이번 라운드는 관전 중입니다. 다음 라운드부터 참여할 수 있습니다.';
+    }
     chat.push({ kind: 'chat', id: playerId, name: player.nickname, text: String(text).trim().slice(0, 300), at: now() });
     trimChat();
     changed();
@@ -256,6 +286,10 @@ function createRoom(options) {
     if (phase !== 'proposal') return;
     const { agree, disagree, total } = proposalCounts();
     const answered = agree + disagree;
+
+    // [W-2] 인원이 0이면 "찬성 0 × 2 >= 0"이 참이 되어 0명짜리 투표로 넘어갔다.
+    // 이 경우는 W-1의 라운드 취소가 처리한다.
+    if (total <= 0) { changed(); return; }
 
     if (agree * 2 >= total) { beginVoting(); return; }
     if (disagree * 2 > total) { rejectProposal(); return; }

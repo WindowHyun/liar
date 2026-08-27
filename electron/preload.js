@@ -11,6 +11,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 let serverUrl = null;
 const listeners = [];
+const noticeListeners = [];
 
 function update(url) {
   if (url === serverUrl) return;
@@ -22,6 +23,13 @@ function update(url) {
 
 ipcRenderer.on('server-changed', (_event, url) => update(url));
 
+// [E-2] 버전 불일치처럼 화면에 띄워야 하는 알림
+ipcRenderer.on('notice', (_event, notice) => {
+  for (const fn of noticeListeners) {
+    try { fn(notice); } catch { /* 화면 쪽 예외가 여기까지 올라오지 않게 */ }
+  }
+});
+
 // 창이 뜬 시점에 이미 호스트가 정해져 있을 수 있다. 지금 상태를 한 번 받아 온다.
 ipcRenderer.invoke('get-status').then((status) => {
   if (status) update(status.serverUrl);
@@ -31,4 +39,5 @@ contextBridge.exposeInMainWorld('liar', {
   isElectron: true,
   getServer: () => serverUrl,
   onServerChange: (fn) => { if (typeof fn === 'function') listeners.push(fn); },
+  onNotice: (fn) => { if (typeof fn === 'function') noticeListeners.push(fn); },
 });

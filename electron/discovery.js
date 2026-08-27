@@ -23,6 +23,14 @@ const dgram = require('dgram');
 const os = require('os');
 const { log, warn, error } = require('../logger');
 
+/**
+ * [E-2] 알림 형식 버전. 배포 시점이 갈려 구/신 버전이 섞이면 서로를 발견해 한 방에
+ * 모이려 하고, 게임 메시지 형식이 다르면 그때 가서 이상하게 깨진다. 버전이 다른 상대는
+ * 아예 참가자로 세지 않고, 사용자에게 "버전이 다르다"고 알린다.
+ * 형식을 바꿀 때 반드시 올릴 것.
+ */
+const DISCOVERY_VERSION = 1;
+
 const ANNOUNCE_MS = 2000;      // 알림 주기
 const PEER_TIMEOUT_MS = 7000;  // 알림 3~4번을 연속으로 놓치면 나간 것으로 본다
 
@@ -54,9 +62,11 @@ function computeBroadcast(address, netmask) {
  * @param nodeId        내 식별자
  * @param buildAnnounce 매번 보낼 내용을 만들어 주는 함수 (호스트 여부 등이 바뀌므로)
  * @param onChange      피어 목록이 바뀌면 호출
+ * @param onVersionMismatch 버전이 다른 인스턴스를 봤을 때 호출
  */
 function createDiscovery(options) {
-  const { port, nodeId, buildAnnounce, onChange = () => {} } = options;
+  const { port, nodeId, buildAnnounce, onChange = () => {}, onVersionMismatch = () => {} } = options;
+  let mismatchReported = null; // 같은 버전을 2초마다 반복해서 알리지 않게
 
   const peers = new Map(); // nodeId -> { nodeId, address, isHost, lastSeen }
   const sockets = new Map(); // "로컬IP|목적지" -> 재사용할 송신 소켓
@@ -105,7 +115,7 @@ function createDiscovery(options) {
 
   function announce() {
     if (stopped) return;
-    const payload = Object.assign({ v: 1, nodeId }, buildAnnounce());
+    const payload = Object.assign({ v: DISCOVERY_VERSION, nodeId }, buildAnnounce());
     const data = Buffer.from(JSON.stringify(payload), 'utf-8');
 
     let interfaces = getLocalIPv4Interfaces();
@@ -158,6 +168,16 @@ function createDiscovery(options) {
       if (!msg || typeof msg.nodeId !== 'string' || msg.nodeId.length > 64) return;
       if (msg.nodeId === nodeId) return; // 내가 보낸 것이 돌아온 것
 
+      // [E-2] 버전이 다르면 참가자로 세지 않는다. 같이 모이면 게임이 이상하게 깨진다.
+      if (msg.v !== DISCOVERY_VERSION) {
+        if (mismatchReported !== msg.v) {
+          mismatchReported = msg.v;
+          warn(`[버전 불일치] ${rinfo.address}의 버전 ${msg.v} != 내 버전 ${DISCOVERY_VERSION} - 참가자로 세지 않습니다`);
+          onVersionMismatch({ peerVersion: msg.v, myVersion: DISCOVERY_VERSION, address: rinfo.address });
+        }
+        return;
+      }
+
       const before = peers.get(msg.nodeId);
       peers.set(msg.nodeId, {
         nodeId: msg.nodeId,
@@ -203,4 +223,4 @@ function createDiscovery(options) {
   };
 }
 
-module.exports = { createDiscovery, getLocalIPv4Interfaces, ANNOUNCE_MS, PEER_TIMEOUT_MS };
+module.exports = { createDiscovery, getLocalIPv4Interfaces, DISCOVERY_VERSION, ANNOUNCE_MS, PEER_TIMEOUT_MS };

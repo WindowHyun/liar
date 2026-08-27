@@ -5,11 +5,9 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 
-// LAN(UDP) 버전과 웹 버전 스위트를 모두 돌린다.
 const suites = [
-  'transport-test.js', 'round-test.js', 'server-test.js', 'ui-test.js',   // LAN 버전
-  'web-room-test.js', 'web-ui-test.js',                                   // 웹 버전
-  'discovery-test.js', 'bridge-test.js',                                  // Electron 버전
+  'web-room-test.js', 'web-ui-test.js',    // 게임 규칙과 화면 (웹·Electron 공용)
+  'discovery-test.js', 'bridge-test.js',   // Electron - 자동 발견, 호스트 인계
 ];
 let failed = 0;
 
