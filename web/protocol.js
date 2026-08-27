@@ -20,6 +20,7 @@ const CLIENT_MESSAGES = {
   start: () => null,
   chat: (m) => (str(m.text, LIMITS.text) ? null : 'text'),
   callVote: () => null,
+  proposalVote: (m) => (typeof m.agree === 'boolean' ? null : 'agree'),
   vote: (m) => (str(m.targetId, LIMITS.id) ? null : 'targetId'),
   guess: (m) => (str(m.word, LIMITS.word) ? null : 'word'),
 };

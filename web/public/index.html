@@ -39,6 +39,20 @@
       <div id="role-card" class="hidden"></div>
       <div id="chat"></div>
 
+      <div id="proposal-panel" class="hidden">
+        <p class="panel-title">
+          <span id="proposal-by"></span>님이 투표를 제안했습니다. 진행할까요?
+          (남은 시간 <span id="proposal-timer">20</span>초 · 찬성 <span id="proposal-agree">0</span> /
+          반대 <span id="proposal-disagree">0</span> · <span id="proposal-total">0</span>명 중)
+        </p>
+        <div id="proposal-buttons">
+          <button id="proposal-yes" class="ox yes">O 진행</button>
+          <button id="proposal-no" class="ox no">X 더 듣기</button>
+        </div>
+        <p id="proposal-mine" class="panel-note hidden"></p>
+        <p class="panel-note">찬성이 절반 이상이면 투표로 넘어갑니다.</p>
+      </div>
+
       <div id="vote-panel" class="hidden">
         <p class="panel-title">
           <span data-label="liar">Oliveyoung</span>이라고 생각하는 사람에게 투표하세요.

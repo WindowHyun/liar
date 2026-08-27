@@ -100,9 +100,23 @@ async function main() {
   await p2.page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), { timeout: 5000 });
   check('X3 대화가 모두에게 보인다', (await p3.page.textContent('#chat')).includes('빨갛습니다'));
 
-  // 투표 - 라이어를 지목한다
+  // 투표 제안 - 먼저 다 같이 O/X로 진행 여부를 정한다
   await p1.page.click('#vote-btn');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#proposal-panel:not(.hidden)', { timeout: 5000 })));
+  check('X4 투표 버튼을 누르면 전원 화면에 O/X가 뜬다',
+    (await p2.page.textContent('#proposal-panel')).includes('진행할까요'));
+  check('X4 찬반 단계에서는 대화가 아직 열려 있다', !(await p1.page.isDisabled('#chat-input')));
+
+  // 3명 중 1명만 O를 눌러도 아직 33%라 진행되지 않는다
+  await p1.page.click('#proposal-yes');
+  await wait(400);
+  check('X4 찬성 1/3이면 아직 투표로 넘어가지 않는다',
+    await p2.page.isVisible('#proposal-panel'));
+
+  // 두 번째 O로 2/3 → 50% 이상이라 투표로 넘어간다
+  await p2.page.click('#proposal-yes');
   await Promise.all(pages.map((p) => p.page.waitForSelector('#vote-panel:not(.hidden)', { timeout: 5000 })));
+  check('X4 찬성이 절반을 넘으면 투표로 넘어간다', true);
   check('X4 투표 중에는 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
 
   const liarName = pages[liarIndex].name;

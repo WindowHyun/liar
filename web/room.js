@@ -27,7 +27,8 @@ const crypto = require('crypto');
 const { normalizeWord } = require('./protocol');
 const WORD_LIST = require('./words');
 
-const MIN_PLAYERS = 3;
+const MIN_PLAYERS = 2;
+const PROPOSAL_MS = 20000;      // 투표를 진행할지 묻는 찬반(O/X) 제한 시간
 const VOTE_MS = 30000;          // 투표 제한 시간
 const GUESS_MS = 30000;         // 라이어가 제시어를 맞힐 제한 시간
 const LOBBY_DROP_MS = 10000;    // 로비에서 끊긴 사람을 목록에서 지우기까지
@@ -50,7 +51,9 @@ function createRoom(options) {
   const chat = [];
   const recentWords = [];
 
-  let phase = 'lobby'; // lobby | playing | voting | guess | result
+  // lobby | playing | proposal | voting | guess | result
+  //   proposal: 누가 투표 버튼을 누르면, 정말 투표로 갈지 다 같이 O/X로 정하는 단계
+  let phase = 'lobby';
   let round = null;
   let result = null;
   let phaseTimer = null;
@@ -103,9 +106,13 @@ function createRoom(options) {
     const nickname = String(input.nickname).trim().slice(0, 24);
 
     // 토큰이 맞으면 같은 사람으로 되살린다. 새로고침하거나 잠깐 끊겨도 자리를 잃지 않는다.
+    // 단, 그 자리에 이미 누가 접속해 있으면 되살리지 않는다. 한 PC에서 창을 두 개 띄우면
+    // 저장소를 공유해 토큰이 같아지는데, 그때 두 창이 한 사람으로 합쳐져 버린다.
+    // (창 두 개 = 두 참가자여야 한다.)
     if (input.token) {
       for (const player of players.values()) {
         if (player.token !== input.token) continue;
+        if (player.connected) break; // 이미 쓰고 있는 자리 - 새 참가자로 들어간다
         player.connected = true;
         if (phase === 'lobby' || phase === 'result') player.nickname = nickname;
         changed();
@@ -144,6 +151,7 @@ function createRoom(options) {
 
     // 나간 사람을 계속 기다리면 투표가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
+    else if (phase === 'proposal') settleProposal(false);
     else changed();
   }
 
@@ -167,6 +175,7 @@ function createRoom(options) {
       category,
       word,
       votes: new Map(),
+      proposal: null,
       accusedId: null,
       votingEndsAt: null,
       guessEndsAt: null,
@@ -184,6 +193,7 @@ function createRoom(options) {
 
   function say(playerId, text) {
     // 투표·정답 단계에서는 대화를 막는다. 화면에서만 막으면 개발자 도구로 우회된다.
+    // 찬반(proposal) 단계는 "투표로 갈까요?"를 묻는 절차일 뿐이라 대화를 막지 않는다.
     if (phase === 'voting' || phase === 'guess') return '지금은 대화할 수 없습니다.';
     const player = players.get(playerId);
     if (!player) return '참가자가 아닙니다.';
@@ -193,20 +203,91 @@ function createRoom(options) {
     return null;
   }
 
+  /**
+   * 투표 버튼을 누르면 바로 투표로 가지 않고, 먼저 다 같이 O/X로 정한다.
+   * 찬성이 절반 이상이면 진행한다(4명 중 2명 O 2명 X도 50%라서 진행).
+   */
   function callVote(playerId) {
-    if (phase !== 'playing') return '지금은 투표를 시작할 수 없습니다.';
+    if (phase !== 'playing') return '지금은 투표를 제안할 수 없습니다.';
     if (!inRound(playerId)) return '이번 라운드 참가자가 아닙니다.';
 
-    round.votes.clear();
-    round.votingEndsAt = now() + VOTE_MS;
-    phase = 'voting';
-    chat.push({ kind: 'system', text: `${nameOf(playerId)}님이 투표를 시작했습니다.`, at: now() });
+    round.proposal = {
+      by: playerId,
+      byName: nameOf(playerId),
+      answers: new Map(), // playerId -> true(찬성) / false(반대)
+      endsAt: now() + PROPOSAL_MS,
+    };
+    phase = 'proposal';
+    chat.push({ kind: 'system', text: `${nameOf(playerId)}님이 투표를 제안했습니다. 진행할까요?`, at: now() });
     trimChat();
 
     clearPhaseTimer();
-    phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
+    phaseTimer = setTimer(() => { phaseTimer = null; settleProposal(true); }, PROPOSAL_MS);
     changed();
     return null;
+  }
+
+  /** 찬반에 답한다. agree=true가 O, false가 X. */
+  function respondProposal(playerId, agree) {
+    if (phase !== 'proposal') return '지금은 답할 수 없습니다.';
+    if (!inRound(playerId)) return '이번 라운드 참가자가 아닙니다.';
+
+    round.proposal.answers.set(playerId, agree === true);
+    settleProposal(false); // 안에서 changed()까지 처리한다
+    return null;
+  }
+
+  function proposalCounts() {
+    let agree = 0;
+    let disagree = 0;
+    for (const yes of round.proposal.answers.values()) {
+      if (yes) agree += 1; else disagree += 1;
+    }
+    return { agree, disagree, total: activeRoster().length };
+  }
+
+  /**
+   * 결론이 이미 정해졌으면 기다리지 않고 바로 넘어간다.
+   *   - 찬성이 절반 이상  → 확정, 투표로 진행
+   *   - 반대가 절반 초과  → 남은 사람이 다 찬성해도 절반을 못 넘으므로 확정, 부결
+   * force=true는 제한 시간이 다 됐을 때. 답하지 않은 사람은 그냥 빠진 것으로 센다.
+   */
+  function settleProposal(force) {
+    if (phase !== 'proposal') return;
+    const { agree, disagree, total } = proposalCounts();
+    const answered = agree + disagree;
+
+    if (agree * 2 >= total) { beginVoting(); return; }
+    if (disagree * 2 > total) { rejectProposal(); return; }
+    if (force || answered >= total) {
+      if (agree * 2 >= total) beginVoting();
+      else rejectProposal();
+      return;
+    }
+    changed();
+  }
+
+  function rejectProposal() {
+    clearPhaseTimer();
+    const { agree, disagree } = proposalCounts();
+    round.proposal = null;
+    phase = 'playing';
+    chat.push({ kind: 'system', text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 설명을 이어가세요.`, at: now() });
+    trimChat();
+    changed();
+  }
+
+  function beginVoting() {
+    clearPhaseTimer();
+    const { agree, disagree } = proposalCounts();
+    round.proposal = null;
+    round.votes.clear();
+    round.votingEndsAt = now() + VOTE_MS;
+    phase = 'voting';
+    chat.push({ kind: 'system', text: `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`, at: now() });
+    trimChat();
+    phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
+    changed();
   }
 
   function vote(playerId, targetId) {
@@ -313,6 +394,9 @@ function createRoom(options) {
         category: iAmIn && round ? round.category : null,
         canGuess: phase === 'guess' && !!round && round.accusedId === me.id,
         hasVoted: phase === 'voting' && !!round && round.votes.has(me.id),
+        // 찬반 단계에서 내가 이미 답했는지. null이면 아직 안 답함.
+        proposalAnswer: phase === 'proposal' && !!round && round.proposal.answers.has(me.id)
+          ? round.proposal.answers.get(me.id) : null,
       } : null,
       players: [...players.values()].map((p) => ({
         id: p.id,
@@ -321,10 +405,15 @@ function createRoom(options) {
         inRound: inRound(p.id),
         // 누가 아직 안 던졌는지만 보인다. 누구에게 던졌는지는 보이지 않는다.
         voted: phase === 'voting' && !!round && round.votes.has(p.id),
+        answered: phase === 'proposal' && !!round && round.proposal.answers.has(p.id),
       })),
       round: round ? {
         category: round.category,
         roster: round.roster,
+        proposal: round.proposal ? Object.assign(
+          { by: round.proposal.by, byName: round.proposal.byName, endsAt: round.proposal.endsAt },
+          proposalCounts(),
+        ) : null,
         votingEndsAt: round.votingEndsAt,
         guessEndsAt: round.guessEndsAt,
         accused: round.accusedId ? { id: round.accusedId, nickname: nameOf(round.accusedId) } : null,
@@ -338,12 +427,12 @@ function createRoom(options) {
   }
 
   return {
-    join, disconnect, start, say, callVote, vote, guess, stateFor,
+    join, disconnect, start, say, callVote, respondProposal, vote, guess, stateFor,
     playerIds: () => [...players.keys()],
     // 테스트에서 들여다보기 위한 것. 서버는 쓰지 않는다.
     _debug: () => ({ phase, round, result }),
-    MIN_PLAYERS, VOTE_MS, GUESS_MS,
+    MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS,
   };
 }
 
-module.exports = { createRoom, MIN_PLAYERS, VOTE_MS, GUESS_MS, LOBBY_DROP_MS };
+module.exports = { createRoom, MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS, LOBBY_DROP_MS };

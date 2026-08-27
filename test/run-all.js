@@ -9,6 +9,7 @@ const path = require('path');
 const suites = [
   'transport-test.js', 'round-test.js', 'server-test.js', 'ui-test.js',   // LAN 버전
   'web-room-test.js', 'web-ui-test.js',                                   // 웹 버전
+  'discovery-test.js', 'bridge-test.js',                                  // Electron 버전
 ];
 let failed = 0;
 

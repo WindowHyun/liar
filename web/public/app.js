@@ -64,9 +64,27 @@ function hideBanner() {
 }
 
 // ───────────────────────────── 연결 ─────────────────────────────
+/**
+ * 붙어야 할 게임 서버 주소.
+ *   브라우저(웹 버전)  : 이 페이지를 내려준 그 서버
+ *   Electron 버전      : LAN에서 뽑힌 호스트. 호스트가 바뀌면 주소도 바뀐다.
+ * 두 경우 모두 이 파일 하나로 돌아간다.
+ */
+function resolveServerUrl() {
+  if (window.liar && typeof window.liar.getServer === 'function') return window.liar.getServer();
+  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+}
+
 function connect() {
-  var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  ws = new WebSocket(scheme + location.host);
+  var url = resolveServerUrl();
+  if (!url) {
+    // Electron에서 아직 호스트가 정해지기 전. 곧 알려 줄 테니 기다린다.
+    $('conn-hint').textContent = '같은 네트워크의 참가자를 찾는 중...';
+    showBanner('ok', '같은 네트워크에서 함께할 참가자를 찾는 중입니다...');
+    scheduleReconnect();
+    return;
+  }
+  ws = new WebSocket(url);
 
   ws.onopen = function () {
     reconnectDelay = 500;
@@ -149,6 +167,9 @@ $('nickname-input').addEventListener('keydown', function (ev) { if (ev.key === '
 $('chat-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') $('send-btn').click(); });
 $('guess-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') $('guess-btn').click(); });
 
+$('proposal-yes').onclick = function () { sendMessage({ type: 'proposalVote', agree: true }); };
+$('proposal-no').onclick = function () { sendMessage({ type: 'proposalVote', agree: false }); };
+
 $('vote-buttons').addEventListener('click', function (ev) {
   var btn = ev.target.closest('button[data-id]');
   if (!btn) return;
@@ -179,6 +200,7 @@ function renderParticipants(s) {
     var tagText = null;
     var tagClass = 'tag';
     if (!p.connected) tagText = '끊김';
+    else if (s.phase === 'proposal' && p.inRound) { tagText = p.answered ? '답함' : '대기'; if (p.answered) tagClass += ' voted'; }
     else if (s.phase === 'voting' && p.inRound) { tagText = p.voted ? '투표함' : '대기'; if (p.voted) tagClass += ' voted'; }
     else if (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound) tagText = '관전';
 
@@ -235,6 +257,32 @@ function renderRoleCard(s) {
   } else {
     card.className = 'pending';
     card.textContent = '역할을 받는 중입니다...';
+  }
+}
+
+/** 투표로 갈지 다 같이 O/X로 정하는 단계. */
+function renderProposalPanel(s) {
+  var panel = $('proposal-panel');
+  var show = s.phase === 'proposal' && s.round && s.round.proposal && s.you && s.you.inRound;
+  panel.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  var p = s.round.proposal;
+  $('proposal-by').textContent = p.byName;
+  $('proposal-agree').textContent = p.agree;
+  $('proposal-disagree').textContent = p.disagree;
+  $('proposal-total').textContent = p.total;
+  $('proposal-timer').textContent = secondsLeft(p.endsAt);
+
+  var answered = s.you.proposalAnswer !== null && s.you.proposalAnswer !== undefined;
+  $('proposal-yes').classList.toggle('chosen', s.you.proposalAnswer === true);
+  $('proposal-no').classList.toggle('chosen', s.you.proposalAnswer === false);
+  var mine = $('proposal-mine');
+  mine.classList.toggle('hidden', !answered);
+  if (answered) {
+    mine.textContent = s.you.proposalAnswer
+      ? 'O(진행)에 답했습니다. 다른 사람을 기다리는 중...'
+      : 'X(더 듣기)에 답했습니다. 다른 사람을 기다리는 중...';
   }
 }
 
@@ -308,6 +356,7 @@ function render(s) {
   renderParticipants(s);
   renderChat(s);
   renderRoleCard(s);
+  renderProposalPanel(s);
   renderVotePanel(s);
   renderGuessPanel(s);
   renderResult(s);
@@ -316,6 +365,7 @@ function render(s) {
   $('start-btn').textContent = s.phase === 'result' ? '다음 라운드' : '게임 시작';
   $('start-btn').classList.toggle('hidden', s.phase === 'playing' || s.phase === 'voting' || s.phase === 'guess');
   $('vote-btn').disabled = !(s.phase === 'playing' && s.you && s.you.inRound);
+  $('vote-btn').textContent = s.phase === 'proposal' ? '찬반 진행 중' : '투표';
 
   // 대화는 투표·정답 단계에서만 잠긴다. 서버도 같은 규칙으로 막으므로 화면만의 잠금이 아니다.
   var chatLocked = s.phase === 'voting' || s.phase === 'guess';
@@ -328,11 +378,12 @@ function render(s) {
 
   // 남은 시간은 1초마다 다시 계산한다(서버 시계 기준).
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  if (s.phase === 'voting' || s.phase === 'guess') {
+  if (s.phase === 'proposal' || s.phase === 'voting' || s.phase === 'guess') {
     tickTimer = setInterval(function () {
-      if (!state) return;
-      if (state.phase === 'voting' && state.round) $('vote-timer').textContent = secondsLeft(state.round.votingEndsAt);
-      if (state.phase === 'guess' && state.round) $('guess-timer').textContent = secondsLeft(state.round.guessEndsAt);
+      if (!state || !state.round) return;
+      if (state.phase === 'proposal' && state.round.proposal) $('proposal-timer').textContent = secondsLeft(state.round.proposal.endsAt);
+      if (state.phase === 'voting') $('vote-timer').textContent = secondsLeft(state.round.votingEndsAt);
+      if (state.phase === 'guess') $('guess-timer').textContent = secondsLeft(state.round.guessEndsAt);
     }, 1000);
   }
 }
@@ -344,6 +395,21 @@ if (savedName && readToken()) {
   myNickname = savedName;
   joined = true;
   enterGameScreen();
+}
+
+// Electron 버전에서 호스트가 바뀌면(먼저 켠 사람이 나가면) 붙을 주소가 달라진다.
+// 기존 연결을 정리하고 새 주소로 곧바로 다시 붙는다.
+if (window.liar && typeof window.liar.onServerChange === 'function') {
+  window.liar.onServerChange(function () {
+    if (ws) {
+      ws.onclose = null; // 자동 재연결 경로가 겹치지 않게
+      try { ws.close(); } catch (e) { /* 이미 닫힘 */ }
+      ws = null;
+    }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectDelay = 300;
+    connect();
+  });
 }
 
 connect();
