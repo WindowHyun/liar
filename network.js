@@ -32,7 +32,8 @@
 const dgram = require('dgram');
 const os = require('os');
 const crypto = require('crypto');
-const { log } = require('./logger');
+const { log, warn, error } = require('./logger');
+const protocol = require('./protocol');
 
 const PORT = 50000;
 const RECV_BUFFER = 65535;          // [규칙 2] UDP 프로토콜 최대치. 1024/2048 같은 임의값 금지.
@@ -42,6 +43,7 @@ const RECV_BUFFER = 65535;          // [규칙 2] UDP 프로토콜 최대치. 10
                                      //  다만 OS 수신 버퍼 힌트는 그대로 최대치로 잡아둔다.)
 const HELLO_INTERVAL_MS = 3000;     // [이슈1] 5초→3초. 무선 환경에서 패킷 한두 개가 유실돼도
                                      // 빨리 다음 신호가 가서 "일부 인원 미노출"이 오래가지 않게 한다.
+const PEER_FORGET_MS = 300000;      // [P2-15] 5분 넘게 조용한 피어는 기억에서 지운다
 const PEER_TIMEOUT_MS = 12000;      // 하트비트 4번(=12초) 연속으로 놓쳐야 오프라인 처리 - 순간적인
                                      // 패킷 유실 한두 번 정도는 사람이 사라져 보이지 않게 여유를 둔다.
 const PROTOCOL_VERSION = 2;         // [규칙 7] 배포 시점이 갈리면 구/신 버전이 섞인다.
@@ -134,6 +136,95 @@ function safeClose(sock) {
   try { sock.close(); } catch { /* 이미 닫힘 */ }
 }
 
+// ─────────────────────── 송신 소켓 재사용 [P1-10] ───────────────────────
+// 예전에는 전송할 때마다 소켓을 새로 만들고 닫았다. HELLO만 해도 3초마다 어댑터×2개가
+// 생겼고, 재전송이 붙은 뒤로는 메시지 하나에 8개까지 늘어난다. 어댑터별로 하나씩만
+// 만들어 재사용하고, 오류가 나면 그 소켓만 버려서 다음 전송 때 새로 만들게 한다.
+const broadcastSockets = new Map(); // "로컬IP|목적지" -> { sock, ready, pending }
+const MAX_PENDING = 32;             // bind가 끝나기 전에 쌓아 둘 수 있는 최대 전송 수
+let unicastSocket = null;
+
+function dropBroadcastSocket(key) {
+  const entry = broadcastSockets.get(key);
+  if (!entry) return;
+  broadcastSockets.delete(key);
+  entry.pending = [];
+  safeClose(entry.sock);
+}
+
+/** 이미 버려진 소켓의 늦은 콜백이, 같은 key로 새로 만들어진 소켓을 대신 죽이면 안 된다.
+ *  지금도 지도에 등록된 바로 그 entry일 때만 정리한다. */
+function dropIfCurrent(key, entry) {
+  if (broadcastSockets.get(key) === entry) dropBroadcastSocket(key);
+  else safeClose(entry.sock);
+}
+
+function rawSend(key, entry, data, address, broadcast) {
+  entry.sock.send(data, PORT, broadcast, (err) => {
+    if (!err) return;
+    // [규칙 4] 송신 실패도 조용히 넘어가지 않는다. 흔한 원인: 방화벽/보안에이전트가
+    // 이 프로세스의 아웃바운드 자체를 막은 경우.
+    error(`[송신 실패] 브로드캐스트(${address || '기본'} → ${broadcast}) 전송 오류: ${err.message}`);
+    dropIfCurrent(key, entry);
+  });
+}
+
+function sendVia(key, address, broadcast, data) {
+  let entry = broadcastSockets.get(key);
+  if (!entry) {
+    const created = dgram.createSocket('udp4');
+    entry = { sock: created, ready: false, pending: [] };
+    broadcastSockets.set(key, entry);
+
+    created.on('error', (err) => {
+      error(`[송신 실패] 브로드캐스트(${address || '기본'} → ${broadcast}) 소켓 오류: ${err.message}`);
+      dropIfCurrent(key, entry);
+    });
+    created.bind(0, address || undefined, () => {
+      // bind가 끝나기 전에 이 소켓이 버려졌을 수 있다. 그 사이 같은 key로 새 소켓이
+      // 만들어졌다면 여기서 손대면 안 된다.
+      if (broadcastSockets.get(key) !== entry) { safeClose(created); return; }
+      try {
+        created.setBroadcast(true);
+      } catch (err) {
+        error(`[송신 실패] 브로드캐스트 옵션 설정 실패(${address || '기본'}): ${err.message}`);
+        dropIfCurrent(key, entry);
+        return;
+      }
+      entry.ready = true;
+      const queued = entry.pending;
+      entry.pending = [];
+      for (const buf of queued) rawSend(key, entry, buf, address, broadcast);
+    });
+  }
+
+  if (!entry.ready) {
+    if (entry.pending.length < MAX_PENDING) entry.pending.push(data);
+    return;
+  }
+  rawSend(key, entry, data, address, broadcast);
+}
+
+/** 어댑터가 바뀌면(Wi-Fi 재접속 등) 예전 IP에 묶인 소켓은 더 이상 못 쓴다. 이번 전송의
+ *  목적지 목록에 없는 소켓은 닫아서 정리한다. */
+function pruneBroadcastSockets(activeKeys) {
+  for (const key of [...broadcastSockets.keys()]) {
+    if (!activeKeys.has(key)) dropBroadcastSocket(key);
+  }
+}
+
+function getUnicastSocket() {
+  if (unicastSocket) return unicastSocket;
+  const created = dgram.createSocket('udp4');
+  created.on('error', (err) => {
+    error(`[송신 실패] 유니캐스트 소켓 오류: ${err.message}`);
+    if (unicastSocket === created) unicastSocket = null;
+    safeClose(created);
+  });
+  unicastSocket = created;
+  return created;
+}
+
 /**
  * [규칙 5 - 절대 최적화하지 말 것] obj를 "어댑터마다 각각" 전송한다.
  * <broadcast>(255.255.255.255)로 한 번만 보내면 OS가 어댑터 하나만 골라 내보내서,
@@ -167,22 +258,9 @@ function sendBroadcast(obj) {
     const key = `${address}|${broadcast}`; // 목적지만으로 dedup 금지 - 반드시 (로컬IP, 목적지) 조합
     if (seen.has(key)) continue;
     seen.add(key);
-
-    const sock = dgram.createSocket('udp4');
-    sock.on('error', (err) => {
-      // [규칙 4] 송신 실패도 조용히 넘어가지 않는다. 흔한 원인: 방화벽/보안에이전트가
-      // 이 프로세스의 아웃바운드 자체를 막은 경우.
-      log(`[송신 실패] 브로드캐스트(${address || '기본'} → ${broadcast}) 소켓 오류: ${err.message}`);
-      safeClose(sock);
-    });
-    sock.bind(0, address || undefined, () => {
-      sock.setBroadcast(true);
-      sock.send(data, PORT, broadcast, (err) => {
-        if (err) log(`[송신 실패] 브로드캐스트(${address || '기본'} → ${broadcast}) 전송 오류: ${err.message}`);
-        safeClose(sock);
-      });
-    });
+    sendVia(key, address, broadcast, data);
   }
+  pruneBroadcastSockets(seen);
   return msg.msgId;
 }
 
@@ -192,18 +270,16 @@ function sendUnicast(obj, targetIp) {
   // [P1-11] 목적지가 비어 있으면 Node dgram은 조용히 127.0.0.1로 보낸다. 그러면 남에게
   // 갈 제시어가 내 프로세스로 되돌아와 내 역할을 덮어쓴다. 절대 그냥 보내지 않는다.
   if (!targetIp) {
-    log(`[송신 실패] 유니캐스트 목적지 IP가 없어 전송을 취소함 (type=${obj.type})`);
+    error(`[송신 실패] 유니캐스트 목적지 IP가 없어 전송을 취소함 (type=${obj.type})`);
     return null;
   }
   const msg = stampMsgId(obj);
   const data = Buffer.from(JSON.stringify(msg), 'utf-8');
-  const sock = dgram.createSocket('udp4');
-  sock.on('error', (err) => {
-    log(`[송신 실패] 유니캐스트(→ ${targetIp}) 소켓 오류: ${err.message}`);
-    safeClose(sock);
-  });
+  const sock = getUnicastSocket();
   sock.send(data, PORT, targetIp, (err) => {
-    if (err) log(`[송신 실패] 유니캐스트(→ ${targetIp}) 전송 오류: ${err.message}`);
+    if (!err) return;
+    error(`[송신 실패] 유니캐스트(→ ${targetIp}) 전송 오류: ${err.message}`);
+    if (unicastSocket === sock) unicastSocket = null;
     safeClose(sock);
   });
   return msg.msgId;
@@ -244,7 +320,7 @@ function sendUnicastReliable(obj, targetIp, onFail) {
   const fire = () => {
     if (tries > ACK_MAX_RETRIES) {
       pendingAcks.delete(msg.msgId);
-      log(`[전달 실패] ${msg.type} → ${targetIp}: ${ACK_MAX_RETRIES}회 재전송했으나 ACK 없음`);
+      error(`[전달 실패] ${msg.type} → ${targetIp}: ${ACK_MAX_RETRIES}회 재전송했으나 ACK 없음`);
       diagnosticsHandler({ type: 'deliveryFailed', messageType: msg.type, targetIp });
       if (onFail) onFail('noAck');
       return;
@@ -281,7 +357,11 @@ function getOnlinePeers() {
   const now = Date.now();
   const online = [];
   for (const [id, info] of knownPeers) {
-    if (now - info.lastSeen <= PEER_TIMEOUT_MS) online.push({ id, ...info });
+    const silentFor = now - info.lastSeen;
+    if (silentFor <= PEER_TIMEOUT_MS) online.push({ id, ...info });
+    // [P2-15] 앱을 재시작할 때마다 MY_ID가 새로 생기므로, 지운 적 없는 이 맵은 계속
+    // 커진다. 오프라인 판정 시점보다 한참 지난 항목은 버린다.
+    else if (silentFor > PEER_FORGET_MS) knownPeers.delete(id);
   }
   return online;
 }
@@ -300,9 +380,25 @@ function startReceiver(onMessage) {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true, recvBufferSize: RECV_BUFFER });
 
     sock.on('message', (data, rinfo) => {
+      // [P1-12] 파싱 실패 / 형식 오류 / 게임 로직 예외를 구분한다. 예전에는 셋 다
+      // "패킷 처리 실패" 경고 한 줄로 뭉뚱그려져서, 게임 로직의 실제 버그가 잡음에 묻혔다.
+      let msg;
       try {
-        const msg = JSON.parse(data.toString('utf-8'));
+        msg = JSON.parse(data.toString('utf-8'));
+      } catch (err) {
+        warn(`[수신 경고] JSON 파싱 실패(무시하고 계속 수신) from ${rinfo.address}: ${err.message}`);
+        return;
+      }
 
+      // [P3-33] 형식이 어긋난 패킷은 게임 로직에 닿기 전에 버린다. 덕분에 game.js와 화면은
+      // 필드 모양을 믿고 쓸 수 있다(닉네임 없는 DESC, 문자열 아닌 GUESS 등이 안 올라온다).
+      const invalid = protocol.validate(msg);
+      if (invalid) {
+        warn(`[수신 경고] 형식이 맞지 않는 패킷 무시 from ${rinfo.address}: ${invalid}`);
+        return;
+      }
+
+      try {
         // [P0-3] ACK는 전송 계층에서 소비하고 게임 로직까지 올리지 않는다.
         if (msg.type === 'ACK') { resolveAck(msg.ackFor); return; }
 
@@ -325,23 +421,32 @@ function startReceiver(onMessage) {
         // 기다리지 않고 즉시 내 존재를 알려준다. 이게 없으면 "먼저 있던 사람"을
         // "늦게 들어온 사람"이 몇 초간 못 보는 비대칭이 계속 생긴다.
         // HELLO에는 반응하지 않게 해서(JOIN에만 반응) 무한 응답 루프를 막는다.
+        // [P2-17] 응답은 새로 들어온 사람에게만 유니캐스트한다 - 전체 브로드캐스트로 되받으면
+        // N명일 때 JOIN 하나에 N건이 터져 나온다.
         if (msg.type === 'JOIN' && isNewPeer && myNickname) {
-          sendBroadcast({ type: 'HELLO', id: MY_ID, nickname: myNickname, version: PROTOCOL_VERSION });
+          sendUnicast({ type: 'HELLO', id: MY_ID, nickname: myNickname, version: PROTOCOL_VERSION }, rinfo.address);
         }
         if (msg.type === 'HELLO' || msg.type === 'JOIN') {
           // [규칙 7] 나와 다른 버전이 감지되면 사용자에게 알린다. 조용히 무시하면
           // "일부만 안 되는" 것처럼 보여서 원인 파악이 매우 어려워진다.
           if (msg.version !== undefined && msg.version !== PROTOCOL_VERSION) {
-            log(`[버전 불일치] ${rinfo.address}(${msg.nickname || msg.id})의 버전 ${msg.version} != 내 버전 ${PROTOCOL_VERSION}`);
+            warn(`[버전 불일치] ${rinfo.address}(${msg.nickname || msg.id})의 버전 ${msg.version} != 내 버전 ${PROTOCOL_VERSION}`);
             diagnosticsHandler({ type: 'versionMismatch', peerVersion: msg.version, myVersion: PROTOCOL_VERSION });
           }
         }
+      } catch (err) {
+        // 전송 계층에서 난 예외. 그 패킷만 버리고 계속 수신한다 (소켓 재생성 금지).
+        warn(`[수신 경고] 전송 계층 처리 실패(무시하고 계속 수신) from ${rinfo.address}: ${err.message}`);
+        return;
+      }
 
+      try {
         onMessage(msg, rinfo);
       } catch (err) {
-        // 패킷 하나 파싱/처리 실패는 그 패킷만 버리고 계속 수신한다 (소켓 재생성 금지).
-        // 다만 원인 진단을 위해 반드시 로그는 남긴다 - [규칙 4].
-        log(`[수신 경고] 패킷 처리 실패(무시하고 계속 수신) from ${rinfo.address}: ${err.message}`);
+        // 여기까지 온 예외는 "패킷이 이상한 것"이 아니라 게임 로직의 버그다. 로그 파일에만
+        // 남기면 아무도 못 보므로 화면에도 올린다 - [규칙 4].
+        error(`[처리 오류] ${msg.type} 처리 중 예외: ${err.stack || err.message}`);
+        diagnosticsHandler({ type: 'handlerError', messageType: msg.type, message: err.message });
       }
     });
 
@@ -351,7 +456,7 @@ function startReceiver(onMessage) {
       // bind는 대체로 성공한다(EADDRINUSE가 안 난다). 대신 브로드캐스트는 양쪽 다 받지만
       // 유니캐스트(제시어)는 한쪽에만 도착해서, 다른 한 명이 조용히 역할을 못 받는다.
       // → 2중 실행은 이 오류로 잡히지 않으므로 앱 진입점의 단일 인스턴스 락으로 막아야 한다.
-      log(`[수신 실패] 수신 소켓 오류 - 2초 후 재생성: ${err.message}`);
+      error(`[수신 실패] 수신 소켓 오류 - 2초 후 재생성: ${err.message}`);
       diagnosticsHandler({ type: 'receiveLost', message: err.message });
       hasFailedBefore = true;
       safeClose(sock);

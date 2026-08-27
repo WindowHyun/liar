@@ -1,0 +1,14 @@
+{
+  "name": "liar-game",
+  "version": "0.5.0",
+  "private": true,
+  "description": "LAN(UDP 브로드캐스트) 라이어 게임",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-all.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

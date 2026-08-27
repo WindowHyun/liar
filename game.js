@@ -30,21 +30,36 @@
  */
 
 const net = require('./network');
-const { log } = require('./logger');
+const protocol = require('./protocol');
+const { log, warn } = require('./logger');
 
+// [P3-34] 5개뿐이라 금방 반복됐고 카테고리도 편중돼 있었다. 늘리고, 최근에 나온 제시어는
+// 잠시 제외해서 연속으로 같은 단어가 나오지 않게 한다.
 const WORD_LIST = [
-  ['과일', '사과'], ['과일', '바나나'], ['동물', '기린'], ['음식', '김치찌개'], ['장소', '도서관'],
+  ['과일', '사과'], ['과일', '바나나'], ['과일', '수박'], ['과일', '포도'], ['과일', '딸기'],
+  ['동물', '기린'], ['동물', '코끼리'], ['동물', '펭귄'], ['동물', '고양이'], ['동물', '악어'],
+  ['음식', '김치찌개'], ['음식', '떡볶이'], ['음식', '삼겹살'], ['음식', '비빔밥'], ['음식', '치킨'],
+  ['장소', '도서관'], ['장소', '놀이공원'], ['장소', '지하철역'], ['장소', '찜질방'], ['장소', '편의점'],
+  ['직업', '소방관'], ['직업', '요리사'], ['직업', '프로그래머'], ['직업', '가수'], ['직업', '경찰관'],
+  ['물건', '우산'], ['물건', '냉장고'], ['물건', '이어폰'], ['물건', '자전거'], ['물건', '칫솔'],
 ];
+const RECENT_WORDS_MAX = 8; // 최근 이만큼은 다시 뽑지 않는다
+const recentWords = [];
 
+const MIN_PLAYERS = 3;          // [P1-6] 3명 미만이면 라이어 게임이 성립하지 않는다
 const VOTE_DURATION_MS = 30000;
+const GUESS_DURATION_MS = 30000; // [P1-9] 라이어가 제시어를 맞힐 제한 시간
+const REVEAL_WAIT_MS = 8000;     // [P1-9] 지목된 사람의 공개(REVEAL)를 기다리는 시간
 const PARTICIPANT_REFRESH_MS = 3000;
 const WORD_WAIT_MS = 5000; // [P0-3] 라운드가 시작됐는데 이 시간 안에 제시어가 안 오면 사용자에게 알린다
 
 let nickname = null;
 let onStateChange = () => {};
 
+let joined = false; // [P2-14] join()이 두 번 불려 수신 소켓·타이머가 중복 생성되는 것을 막는다
 let myIsLiar = false;
 let myWord = null; // 라이어면 null
+let myCategory = null;
 let myRoleReceived = false; // [P0-3] 이번 라운드 역할을 실제로 받았는지
 let wordWaitHandle = null;
 let pendingWord = null; // START보다 WORD가 먼저 도착한 경우를 위한 보관함
@@ -58,6 +73,10 @@ let roundActive = false; // [이슈2] 게임이 시작된 상태에서만 true -
 let roundParticipants = new Map(); // id -> nickname, 이번 라운드로 고정된 명단
 let roundId = null;      // [P0-2] 이번 라운드 식별자. 지난 라운드의 늦은 패킷을 걸러낸다
 let roundHostId = null;  // [P0-2] 이번 라운드의 결과를 확정할 사람
+let roundAccusedId = null;   // 호스트가 정한 지목 대상
+let awaitingGuessFrom = null; // 지금 정답을 제출할 자격이 있는 사람 (지목된 라이어)
+let revealTimeoutHandle = null;
+let guessTimeoutHandle = null;
 
 /** 이번 라운드의 정답. 호스트만 들고 있고 절대 화면(onStateChange)으로 내보내지 않는다.
  *  호스트가 라이어로 뽑혀도 정답 판정은 해야 하므로 myWord와 별도로 보관한다.
@@ -81,9 +100,13 @@ function finishRound(payload) {
   votingOpen = false;
   roundId = null;
   roundHostId = null;
+  roundAccusedId = null;
+  awaitingGuessFrom = null;
   hostWord = null;
   clearVoteTimeout();
   clearWordWait();
+  clearRevealTimeout();
+  clearGuessTimeout();
   onStateChange({ type: 'result', ...payload });
 }
 
@@ -95,8 +118,17 @@ function currentParticipants() {
   return map;
 }
 
+/** [P2-26] 화면의 초록 점이 늘 초록이면 "온라인 추정치"라는 규칙 6의 뉘앙스가 전달되지
+ *  않는다. 하트비트가 끊긴 지 얼마나 됐는지를 stale로 실어 보낸다. */
 function participantList() {
-  return [...currentParticipants()].map(([id, nickname]) => ({ id, nickname }));
+  const now = Date.now();
+  const peers = new Map(net.getOnlinePeers().map((p) => [p.id, p]));
+  const staleAfter = Math.max(net.PEER_TIMEOUT_MS / 2, 1000);
+  return [...currentParticipants()].map(([id, name]) => {
+    if (id === net.MY_ID) return { id, nickname: name, stale: false };
+    const peer = peers.get(id);
+    return { id, nickname: name, stale: !peer || now - peer.lastSeen > staleAfter };
+  });
 }
 
 function pushParticipants() {
@@ -113,6 +145,13 @@ function checkHostAlive() {
 }
 
 function join(myNickname) {
+  // [P2-14] 브라우저를 새로고침하면 join이 다시 올라온다. 그대로 두면 수신 소켓과
+  // 하트비트 타이머가 겹쳐서 생긴다.
+  if (joined) {
+    pushParticipants();
+    return;
+  }
+  joined = true;
   nickname = myNickname;
   net.setDiagnosticsHandler((d) => onStateChange({ type: 'networkIssue', detail: d }));
   net.startPresence(nickname);
@@ -132,6 +171,10 @@ function beginRound({ id, hostId, roster }) {
   votes.clear();
 
   voteClosed = false;
+  roundAccusedId = null;
+  awaitingGuessFrom = null;
+  clearRevealTimeout();
+  clearGuessTimeout();
   roundActive = true;
   roundId = id;
   roundHostId = hostId;
@@ -139,6 +182,7 @@ function beginRound({ id, hostId, roster }) {
 
   myIsLiar = false;
   myWord = null;
+  myCategory = null;
   myRoleReceived = false;
   hostWord = null;
 
@@ -164,14 +208,23 @@ function beginRound({ id, hostId, roster }) {
 function startGame() {
   // [P0-2 전제] 라운드가 이미 돌고 있으면 새로 시작하지 않는다. 호스트가 둘이 되면
   // 결과 확정 권위가 갈라져서 이 수정 자체가 무의미해진다.
-  if (roundActive) return;
+  if (roundActive) {
+    onStateChange({ type: 'startRejected', reason: 'roundActive' });
+    return;
+  }
 
   const online = net.getOnlinePeers();
   const everyone = [...currentParticipants()].map(([id, nickname]) => ({
     id, nickname, ip: id === net.MY_ID ? null : online.find((p) => p.id === id)?.ip,
   }));
+  // [P1-6] 혼자서도 시작되던 것을 막는다. 2명이면 라이어가 누군지 자동으로 드러난다.
+  if (everyone.length < MIN_PLAYERS) {
+    onStateChange({ type: 'startRejected', reason: 'tooFewPlayers', need: MIN_PLAYERS, have: everyone.length });
+    return;
+  }
+
   const liar = everyone[Math.floor(Math.random() * everyone.length)];
-  const [category, word] = WORD_LIST[Math.floor(Math.random() * WORD_LIST.length)];
+  const [category, word] = pickWord();
 
   const id = `${net.MY_ID}-${Date.now()}`;
   const roster = everyone.map(({ id, nickname }) => ({ id, nickname }));
@@ -204,9 +257,20 @@ function startGame() {
   }
 }
 
+/** [P3-34] 최근에 나온 제시어는 잠시 제외하고 뽑는다. */
+function pickWord() {
+  const pool = WORD_LIST.filter(([, word]) => !recentWords.includes(word));
+  const candidates = pool.length > 0 ? pool : WORD_LIST;
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  recentWords.push(picked[1]);
+  while (recentWords.length > RECENT_WORDS_MAX) recentWords.shift();
+  return picked;
+}
+
 function applyWord(category, word, isLiar) {
   myIsLiar = isLiar;
   myWord = word;
+  myCategory = category;
   myRoleReceived = true;
   clearWordWait();
   onStateChange({ type: 'word', category, word, isLiar });
@@ -235,8 +299,11 @@ function armWordWait(id) {
  *  실제로 전송 자체가 안 나간다. */
 function sendDescription(text) {
   if (votingOpen) return;
-  net.sendBroadcast({ type: 'DESC', id: net.MY_ID, nickname, text });
-  onStateChange({ type: 'description', id: net.MY_ID, name: nickname, text });
+  if (typeof text !== 'string') return;
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > protocol.LIMITS.text) return;
+  net.sendBroadcast({ type: 'DESC', id: net.MY_ID, nickname, text: trimmed });
+  onStateChange({ type: 'description', id: net.MY_ID, name: nickname, text: trimmed });
 }
 
 function clearVoteTimeout() {
@@ -258,6 +325,38 @@ function armVoteTimeout() {
   }, VOTE_DURATION_MS);
 }
 
+function clearRevealTimeout() {
+  if (revealTimeoutHandle) { clearTimeout(revealTimeoutHandle); revealTimeoutHandle = null; }
+}
+
+function clearGuessTimeout() {
+  if (guessTimeoutHandle) { clearTimeout(guessTimeoutHandle); guessTimeoutHandle = null; }
+}
+
+/** [P1-9] 지목된 사람이 공개(REVEAL)를 안 보내면 - 창을 닫았거나 패킷이 끝내 유실되면 -
+ *  예전에는 전원이 무한 대기했다. 호스트가 기다리다 라운드를 정리한다. */
+function armRevealTimeout() {
+  clearRevealTimeout();
+  const id = roundId;
+  revealTimeoutHandle = setTimeout(() => {
+    revealTimeoutHandle = null;
+    if (roundId !== id || !isHost()) return;
+    warn('[라운드 정리] 지목된 사람이 응답하지 않아 라운드를 취소합니다.');
+    announceResult({ winner: 'none', reason: 'noReveal' });
+  }, REVEAL_WAIT_MS);
+}
+
+/** [P1-9] 라이어가 정답을 제출하지 않고 버티면 라운드가 끝나지 않았다. 제한 시간을 둔다. */
+function armGuessTimeout() {
+  clearGuessTimeout();
+  const id = roundId;
+  guessTimeoutHandle = setTimeout(() => {
+    guessTimeoutHandle = null;
+    if (roundId !== id || !isHost()) return;
+    announceResult({ winner: 'citizens', reason: 'guessTimeout' });
+  }, GUESS_DURATION_MS);
+}
+
 /** 투표를 여는 유일한 통로. callVote(내가 시작) / CALL_VOTE 수신 / [P1-8] 늦게 받은 VOTE가
  *  전부 여기로 들어온다. */
 function openVoting(byId) {
@@ -276,15 +375,23 @@ function callVote() {
   openVoting(net.MY_ID);
 }
 
+/** [P2-13] 화면 잠금은 우회할 수 있으므로 로직에서도 막는다 - [수정 6]과 같은 원칙.
+ *  투표가 안 열렸거나, 이번 라운드 참가자가 아니거나, 자기 자신에게 던진 표는 내보내지 않는다. */
 function sendVote(targetId) {
   if (!votingOpen) return;
+  if (targetId === net.MY_ID) return;
+  if (!roundParticipants.has(targetId)) return;
   net.sendBroadcastReliable({ type: 'VOTE', voterId: net.MY_ID, roundId, targetId });
   registerVote(net.MY_ID, targetId);
 }
 
+/** [P2-13] 정답은 "지목된 라이어" 본인만 낼 수 있다. 예전에는 누구든 아무 때나 GUESS를
+ *  보내 라운드를 끝낼 수 있었다. */
 function submitGuess(word) {
+  if (awaitingGuessFrom !== net.MY_ID) return;
+  if (typeof word !== 'string' || word.trim().length === 0 || word.length > protocol.LIMITS.word) return;
   // 내가 호스트면 내 GUESS는 루프백 필터에 걸려 되돌아오지 않으므로 여기서 바로 판정한다.
-  if (isHost()) { judgeGuess(word); return; }
+  if (isHost()) { judgeGuess(net.MY_ID, word); return; }
   net.sendBroadcastReliable({ type: 'GUESS', id: net.MY_ID, roundId, word });
 }
 
@@ -300,6 +407,7 @@ function registerVote(voterId, targetId) {
     openVoting(voterId);
   }
 
+  if (!roundParticipants.has(targetId)) return; // 명단에 없는 사람에게 던진 표는 세지 않는다
   votes.set(voterId, targetId);
   onStateChange({ type: 'vote', voterId, targetId, voted: votes.size, total: roundParticipants.size });
   // [P0-2] 집계는 호스트만. 나머지는 진행 상황 표시용으로만 표를 모은다.
@@ -350,16 +458,29 @@ function tryResolveVote(force) {
 function applyAccused(accusedId) {
   votingOpen = false;
   voteClosed = true;
+  roundAccusedId = accusedId;
   clearVoteTimeout();
   onStateChange({ type: 'accused', id: accusedId, name: roundParticipants.get(accusedId) });
 
   // 지목된 사람이 실제 라이어인지는 본인만 알 수 있으므로, 본인이 직접 공개한다.
-  if (accusedId !== net.MY_ID) return;
-  net.sendBroadcastReliable({ type: 'REVEAL', id: net.MY_ID, roundId, isLiar: myIsLiar });
-  if (myIsLiar) {
-    onStateChange({ type: 'awaitGuess', accusedId: net.MY_ID });
+  if (accusedId === net.MY_ID) {
+    net.sendBroadcastReliable({ type: 'REVEAL', id: net.MY_ID, roundId, isLiar: myIsLiar });
+    applyReveal(net.MY_ID, myIsLiar); // 내 REVEAL은 루프백 필터에 걸리므로 직접 반영한다
   } else if (isHost()) {
-    // 내가 호스트이면서 지목까지 당한 경우. 그 외에는 호스트가 내 REVEAL을 받고 확정한다.
+    armRevealTimeout(); // [P1-9] 지목된 사람이 끝내 응답하지 않는 경우 대비
+  }
+}
+
+/** 공개(REVEAL) 결과를 반영한다. 지목된 본인의 로컬 처리와 REVEAL 수신이 같은 길을 탄다. */
+function applyReveal(accusedId, isLiar) {
+  clearRevealTimeout();
+  if (isLiar) {
+    awaitingGuessFrom = accusedId;
+    onStateChange({ type: 'awaitGuess', accusedId, durationMs: GUESS_DURATION_MS });
+    if (isHost()) armGuessTimeout(); // [P1-9]
+  } else if (isHost()) {
+    // [P0-2] 오답 지목의 결과 확정도 호스트가 한다. 각자 확정하면 REVEAL을 놓친
+    // 사람만 결과를 못 보고 멈춘다.
     announceResult({ winner: 'liar', reason: 'wrongAccusation' });
   }
 }
@@ -374,9 +495,12 @@ function announceResult(payload) {
 /** [P1-7] 정답 판정도 호스트만 한다. 예전에는 제시어를 아는 시민 전원이 각자 판정하고
  *  각자 RESULT를 뿌려서, 5인 게임이면 RESULT가 8건씩 날아다녔다.
  *  호스트가 라이어로 뽑혔을 수도 있으므로 myWord가 아니라 hostWord로 판정한다. */
-function judgeGuess(guess) {
-  if (!isHost() || typeof guess !== 'string' || hostWord === null) return;
-  const winner = guess.trim() === hostWord ? 'liar' : 'citizens';
+function judgeGuess(guesserId, guess) {
+  if (!isHost() || hostWord === null) return;
+  if (guesserId !== awaitingGuessFrom) return; // [P2-13] 지목된 라이어 외의 정답은 받지 않는다
+  clearGuessTimeout();
+  // [P2-18] 앞뒤·중간 공백과 대소문자 차이로 맞힌 정답이 오답 처리되지 않게 한다.
+  const winner = protocol.normalizeWord(guess) === protocol.normalizeWord(hostWord) ? 'liar' : 'citizens';
   announceResult({ winner, reason: 'guess', guess });
 }
 
@@ -434,17 +558,12 @@ function handleMessage(msg) {
       break;
     case 'REVEAL':
       if (!isCurrentRound(msg)) break;
-      if (msg.isLiar) {
-        onStateChange({ type: 'awaitGuess', accusedId: msg.id });
-      } else if (isHost()) {
-        // [P0-2] 오답 지목의 결과 확정도 호스트가 한다. 각자 확정하면 REVEAL을 놓친
-        // 사람만 결과를 못 보고 멈춘다.
-        announceResult({ winner: 'liar', reason: 'wrongAccusation' });
-      }
+      if (msg.id !== roundAccusedId) break; // [P2-13] 지목되지 않은 사람의 공개는 무시한다
+      applyReveal(msg.id, msg.isLiar);
       break;
     case 'GUESS':
       if (!isCurrentRound(msg)) break;
-      judgeGuess(msg.word); // 호스트가 아니면 내부에서 그냥 반환한다
+      judgeGuess(msg.id, msg.word); // 호스트가 아니면 내부에서 그냥 반환한다
       break;
     case 'RESULT':
       if (!isCurrentRound(msg)) break;
@@ -454,4 +573,27 @@ function handleMessage(msg) {
   }
 }
 
-module.exports = { join, startGame, sendDescription, callVote, sendVote, submitGuess, setStateHandler };
+/** [P2-20] 브라우저가 새로고침되거나 잠깐 끊겼다 붙으면 그동안의 이벤트를 놓친다.
+ *  지금 상태를 한 번에 넘겨줘서 화면이 빈 채로 남지 않게 한다. */
+function snapshot() {
+  return {
+    type: 'snapshot',
+    joined,
+    nickname,
+    participants: joined ? participantList() : [], // 참가 전에는 내 빈 항목만 나가지 않게
+    round: roundActive ? {
+      hostId: roundHostId,
+      isHost: roundHostId === net.MY_ID,
+      participants: [...roundParticipants].map(([id, name]) => ({ id, nickname: name })),
+      votingOpen,
+      voteClosed,
+      accusedId: roundAccusedId,
+      awaitingGuessFrom,
+      voted: votes.size,
+      total: roundParticipants.size,
+    } : null,
+    role: myRoleReceived ? { isLiar: myIsLiar, word: myWord, category: myCategory } : null,
+  };
+}
+
+module.exports = { join, startGame, sendDescription, callVote, sendVote, submitGuess, setStateHandler, snapshot };

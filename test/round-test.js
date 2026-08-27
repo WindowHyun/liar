@@ -114,7 +114,7 @@ function makeWorld(names) {
       cancelPending() {},
     };
 
-    inject = { net: fakeNet, logger: { log: () => {}, LOG_PATH: '' } };
+    inject = { net: fakeNet, logger: { log: () => {}, warn: () => {}, error: () => {}, LOG_PATH: '' } };
     delete require.cache[require.resolve(GAME_PATH)];
     p.game = require(GAME_PATH);
     inject = null;
@@ -205,7 +205,9 @@ function t3_singleResultOnGuess() {
   check('T3 라이어가 지목되어 정답 기회를 받음', has(C, 'awaitGuess'));
 
   const before = bus.sent.filter((s) => s.obj.type === 'RESULT').length;
-  C.game.submitGuess('사과');
+  // 제시어 목록은 바뀔 수 있으므로, 시민에게 실제로 배분된 제시어를 읽어서 그대로 맞힌다.
+  const realWord = bus.sent.find((m) => m.obj.type === 'WORD' && m.obj.word !== null).obj.word;
+  C.game.submitGuess(`  ${realWord.toUpperCase()} `); // [P2-18] 공백·대소문자가 섞여도 정답이어야 한다
   advance(1000);
   const resultMsgs = bus.sent.filter((s) => s.obj.type === 'RESULT').length - before;
 
@@ -334,9 +336,102 @@ function t8_lateVoteAfterResolve() {
   check('T8 늦게 도착한 표가 끝난 투표를 다시 열지 않음', after === before, `voteStart ${before} → ${after}`);
 }
 
+function t9_minimumPlayers() {
+  const { players } = makeWorld(['A', 'B']);
+  const [A] = players;
+  A.game.startGame(); flush();
+
+  const rejected = last(A, 'startRejected');
+  check('T9 [P1-6] 3명 미만이면 시작을 거부', !!rejected && rejected.reason === 'tooFewPlayers',
+    rejected ? `reason=${rejected.reason}, have=${rejected.have}` : '거부 이벤트 없음');
+  check('T9 [P1-6] 거부됐으면 라운드도 시작되지 않음', !has(A, 'roundStart'));
+}
+
+function t10_guessTimeout() {
+  const { players } = makeWorld(['A', 'B', 'C']);
+  const [A, B, C] = players;
+  const restore = fixRandom(2, 3, 0); // 라이어=C
+  A.game.startGame(); restore(); flush();
+
+  A.game.callVote(); flush();
+  A.game.sendVote('P3'); flush();
+  B.game.sendVote('P3'); flush();
+  C.game.sendVote('P1'); flush();
+  advance(1000);
+  check('T10 라이어가 지목되어 정답 대기', has(C, 'awaitGuess'));
+
+  advance(31000); // 라이어가 정답을 내지 않고 버틴다
+  const finals = players.map((p) => last(p, 'result'));
+  check('T10 [P1-9] 정답 제한 시간이 지나면 시민 승으로 정리',
+    finals.every((r) => r && r.winner === 'citizens' && r.reason === 'guessTimeout'),
+    finals.map((r, i) => `${players[i].nickname}:${r ? r.winner + '/' + r.reason : '없음'}`).join(' '));
+}
+
+function t11_revealTimeout() {
+  const { bus, players } = makeWorld(['A', 'B', 'C']);
+  const [A, B, C] = players;
+  const restore = fixRandom(0, 3, 0); // 라이어=A(호스트), 지목될 B는 라이어가 아니다
+  A.game.startGame(); restore(); flush();
+
+  bus.drop = (msg) => msg.type === 'REVEAL'; // 지목된 사람의 공개가 아무에게도 닿지 않는다
+  A.game.callVote(); flush();
+  A.game.sendVote('P2'); flush();
+  C.game.sendVote('P2'); flush();
+  B.game.sendVote('P1'); flush();
+  advance(1000);
+
+  check('T11 아직 결과가 나오지 않음(공개 대기)', !last(A, 'result'));
+  advance(9000); // 공개 대기 시간 경과
+  const finals = players.map((p) => last(p, 'result'));
+  check('T11 [P1-9] 공개가 오지 않으면 라운드를 취소',
+    finals.every((r) => r && r.reason === 'noReveal'),
+    finals.map((r, i) => `${players[i].nickname}:${r ? r.reason : '없음'}`).join(' '));
+}
+
+function t12_guessFromWrongPerson() {
+  const { bus, players } = makeWorld(['A', 'B', 'C']);
+  const [A, B, C] = players;
+  const restore = fixRandom(2, 3, 0); // 라이어=C
+  A.game.startGame(); restore(); flush();
+
+  A.game.callVote(); flush();
+  A.game.sendVote('P3'); flush();
+  B.game.sendVote('P3'); flush();
+  C.game.sendVote('P1'); flush();
+  advance(1000);
+
+  const rid = bus.sent.find((m) => m.obj.type === 'START').obj.roundId;
+  // 지목되지 않은 B가 정답을 제출하려 한다 (화면 잠금을 우회한 상황)
+  B.game.submitGuess('사과'); flush();
+  check('T12 [P2-13] 지목되지 않은 사람의 정답은 전송조차 되지 않음',
+    !bus.sent.some((m) => m.obj.type === 'GUESS' && m.from === 'P2'));
+
+  // 위조 패킷을 호스트에게 직접 밀어 넣어도 판정하지 않아야 한다
+  A.onMessage({ type: 'GUESS', id: 'P2', roundId: rid, word: '사과' }, { address: '10.0.0.2' });
+  flush();
+  check('T12 [P2-13] 위조된 정답 패킷도 호스트가 판정하지 않음', !last(A, 'result'));
+}
+
+function t13_voteValidation() {
+  const { bus, players } = makeWorld(['A', 'B', 'C']);
+  const [A] = players;
+  const restore = fixRandom(0, 3, 0);
+  A.game.startGame(); restore(); flush();
+  A.game.callVote(); flush();
+
+  A.game.sendVote('P1'); flush();  // 자기 자신
+  A.game.sendVote('P9'); flush();  // 이번 라운드 명단에 없는 사람
+  const votesSent = bus.sent.filter((m) => m.obj.type === 'VOTE').length;
+  check('T13 [P2-13] 자기 자신·명단 외 투표는 전송되지 않음', votesSent === 0, `VOTE ${votesSent}건`);
+
+  A.game.sendVote('P2'); flush();  // 정상
+  check('T13 정상 투표는 전송됨', bus.sent.filter((m) => m.obj.type === 'VOTE').length === 1);
+}
+
 console.log(`라운드 진행 테스트  (대상: ${GAME_PATH})`);
 for (const fn of [t1_voteLossStillAgrees, t2_noVotesBroadcast, t3_singleResultOnGuess,
-  t4_roleResetBetweenRounds, t5_missedCallVote, t6_wordForSomeoneElse, t7_duplicateStart, t8_lateVoteAfterResolve]) {
+  t4_roleResetBetweenRounds, t5_missedCallVote, t6_wordForSomeoneElse, t7_duplicateStart, t8_lateVoteAfterResolve,
+  t9_minimumPlayers, t10_guessTimeout, t11_revealTimeout, t12_guessFromWrongPerson, t13_voteValidation]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 
