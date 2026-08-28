@@ -51,8 +51,23 @@ function makeRoom(names, liarIndex) {
 }
 const idsOf = (players) => players.map((p) => p.playerId);
 
-/** 투표를 제안하고 전원 찬성으로 통과시킨다(대부분의 시나리오에서 본론은 그다음이라서). */
+/**
+ * 전원이 대화권을 한 번씩 써서 설명 단계를 끝낸다(1인 1회). 본론은 대개 그다음이라서.
+ * 순서는 매 판 섞이므로 방에 물어보며 진행한다.
+ */
+function passTurns(room) {
+  for (let guard = 0; guard < 50; guard += 1) {
+    const dbg = room._debug();
+    if (dbg.phase !== 'turn' || !dbg.round) break;
+    const speaker = dbg.round.speakOrder[dbg.round.speakIndex];
+    if (!speaker) break;
+    room.say(speaker, `${speaker} 설명합니다`);
+  }
+}
+
+/** 투표를 제안하고 전원 찬성으로 통과시킨다. 설명이 안 끝났으면 먼저 끝낸다. */
 function passProposal(room, ids) {
+  passTurns(room);
   room.callVote(ids[0]);
   for (const id of ids) room.respondProposal(id, true);
 }
@@ -193,10 +208,12 @@ function w10_chatLock() {
   const { room, players } = makeRoom(['A', 'B', 'C'], 1);
   room.start();
   const [a, b, c] = idsOf(players);
-  check('W10 진행 중에는 대화할 수 있다', room.say(a, '빨갛습니다') === null);
+  passTurns(room);
+  check('W10 자유 대화 중에는 말할 수 있다', room.say(a, '빨갛습니다') === null);
   room.callVote(a);
-  check('W10 찬반 단계에서는 대화가 열려 있다', room.say(a, '아직 더 듣고 싶어요') === null);
-  passProposal(room, [a, b, c]);
+  check('W10 [이슈1] 찬반 단계부터 대화가 막힌다',
+    typeof room.say(a, '나 아니라니까요') === 'string', room.say(a, 'x') || '통과해버림');
+  for (const id of [a, b, c]) room.respondProposal(id, true);
   check('W10 투표 중에는 서버가 대화를 막는다', typeof room.say(a, '몰래 힌트') === 'string');
   room.vote(a, b); room.vote(c, b); room.vote(b, a);
   check('W10 정답 단계에서도 막힌다', typeof room.say(a, '힌트') === 'string');
@@ -208,6 +225,7 @@ function w11_proposalMajority() {
   const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
   room.start();
   const [a, b, c, d] = idsOf(players);
+  passTurns(room);
 
   room.callVote(a);
   check('W11 투표 버튼을 누르면 바로 투표가 아니라 찬반 단계로 간다',
@@ -234,14 +252,15 @@ function w12_proposalRejected() {
   const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
   room.start();
   const [a, b, c, d] = idsOf(players);
+  passTurns(room);
 
   room.callVote(a);
   room.respondProposal(a, false);
   room.respondProposal(b, false);
   room.respondProposal(c, false);
   check('W12 반대가 절반을 넘으면 그 자리에서 부결된다 (남은 사람을 기다리지 않는다)',
-    room.stateFor(d).phase === 'playing', room.stateFor(d).phase);
-  check('W12 부결되면 설명을 이어갈 수 있다', room.say(a, '계속 설명합니다') === null);
+    room.stateFor(d).phase === 'free', room.stateFor(d).phase);
+  check('W12 부결되면 자유 대화로 돌아가 이야기를 이어갈 수 있다', room.say(a, '계속 이야기합니다') === null);
   check('W12 부결 뒤에 다시 제안할 수 있다', room.callVote(b) === null);
 }
 
@@ -249,6 +268,7 @@ function w13_proposalTimeout() {
   const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
   room.start();
   const [a, b] = idsOf(players);
+  passTurns(room);
 
   room.callVote(a);
   room.respondProposal(a, true);
@@ -259,11 +279,12 @@ function w13_proposalTimeout() {
   const second = makeRoom(['A', 'B', 'C', 'D'], 0);
   second.room.start();
   const ids = idsOf(second.players);
+  passTurns(second.room);
   second.room.callVote(ids[0]);
   second.room.respondProposal(ids[0], true);
   advance(21000);
   check('W13 아무도 더 답하지 않으면 제한 시간에 정리된다 (찬1/4 → 부결)',
-    second.room.stateFor(ids[1]).phase === 'playing', second.room.stateFor(ids[1]).phase);
+    second.room.stateFor(ids[1]).phase === 'free', second.room.stateFor(ids[1]).phase);
 }
 
 function w15_tokenSeatCollision() {
@@ -290,6 +311,7 @@ function w14_twoPlayers() {
   const reason = room.start();
   check('W14 [요청] 2명이면 시작된다', reason === null, reason || 'OK');
   const [a] = idsOf(players);
+  passTurns(room);
   room.callVote(a);
   room.respondProposal(a, true);
   check('W14 2명 중 1명 찬성이면 50%라 진행', room.stateFor(a).phase === 'voting', room.stateFor(a).phase);
@@ -299,7 +321,7 @@ function w16_emptyRoundIsAbandoned() {
   const { room, players } = makeRoom(['A', 'B', 'C'], 0);
   room.start();
   const ids = idsOf(players);
-  check('W16 라운드가 진행 중이다', room._debug().phase === 'playing');
+  check('W16 라운드가 진행 중이다', room._debug().phase === 'turn');
 
   ids.forEach((id) => room.disconnect(id));
   check('W16 [W-1] 전원이 나가면 라운드를 접고 로비로 돌아온다',
@@ -309,7 +331,7 @@ function w16_emptyRoundIsAbandoned() {
   const late2 = room.join({ nickname: '또다른참가자' });
   const s = room.stateFor(late1.playerId);
   check('W16 [W-1] 새로 들어온 사람이 관전자로 갇히지 않는다', s.you.inRound === false && s.phase === 'lobby');
-  check('W16 [W-1] 새 참가자들이 게임을 시작할 수 있다', room.start() === null && room._debug().phase === 'playing');
+  check('W16 [W-1] 새 참가자들이 게임을 시작할 수 있다', room.start() === null && room._debug().phase === 'turn');
 
   // 끊긴 유령은 시간이 지나면 목록에서 사라진다
   advance(61000);
@@ -322,6 +344,7 @@ function w17_emptyProposalDoesNotPass() {
   const { room, players } = makeRoom(['A', 'B', 'C'], 0);
   room.start();
   const ids = idsOf(players);
+  passTurns(room);
   room.callVote(ids[0]);
   check('W17 찬반 단계에 들어갔다', room._debug().phase === 'proposal');
 
@@ -352,12 +375,145 @@ function w18_spectatorCannotChat() {
     room.start() === null && room.stateFor(spectator.playerId).you.inRound === true);
 }
 
+// ── 진행방식 변경: 설명(1인 1회) → 자유 채팅 1분 → 투표 ──────────────
+
+function w19_oneTurnPerPerson() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+  const order = room._debug().round.speakOrder.slice();
+
+  check('W19 시작하면 설명 단계부터다', room._debug().phase === 'turn', room._debug().phase);
+  check('W19 대화권 순서는 전원이 정확히 1회씩',
+    order.length === ids.length && new Set(order).size === ids.length, order.join(','));
+
+  const [first, second] = order;
+  const cutIn = room.say(second, '끼어들기');
+  check('W19 차례가 아닌 사람은 말할 수 없다', typeof cutIn === 'string', cutIn || '통과해버림');
+  check('W19 차례인 사람은 말할 수 있다', room.say(first, '동그랗습니다') === null);
+
+  const again = room.say(first, '하나 더 덧붙이면');
+  check('W19 [요청] 대화권은 무조건 1인 1회 - 말한 사람은 다시 말할 수 없다',
+    typeof again === 'string', again || '통과해버림');
+  check('W19 말하고 나면 대화권이 다음 사람에게 넘어간다',
+    room.stateFor(first).round.speaker.id === second,
+    room.stateFor(first).round.speaker.nickname);
+  check('W19 누가 설명을 마쳤는지 모두가 본다',
+    room.stateFor(second).players.find((p) => p.id === first).spoke === true);
+}
+
+function w20_freeChatAfterEveryoneSpoke() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+  passTurns(room);
+
+  check('W20 전원이 대화권을 쓰면 자유 채팅으로 넘어간다',
+    room._debug().phase === 'free', room._debug().phase);
+  check('W20 자유 채팅에서는 아무나 여러 번 말할 수 있다',
+    room.say(ids[0], '한 번') === null && room.say(ids[0], '두 번') === null);
+  check('W20 자유 채팅에도 남은 시간이 내려간다',
+    room.stateFor(ids[0]).round.freeEndsAt > 0);
+
+  advance(61000); // FREE_MS
+  check('W20 1분이 지나면 찬반 없이 곧바로 투표로 간다',
+    room._debug().phase === 'voting', room._debug().phase);
+}
+
+function w21_voteOnlyAfterExplanations() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+
+  const tooEarly = room.callVote(ids[0]);
+  check('W21 설명이 끝나기 전에는 투표를 제안할 수 없다',
+    typeof tooEarly === 'string' && tooEarly.includes('설명'), tooEarly || '통과해버림');
+
+  passTurns(room);
+  check('W21 설명이 끝나면 제안할 수 있다', room.callVote(ids[0]) === null);
+}
+
+function w22_turnTimeoutMovesOn() {
+  const { room } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const order = room._debug().round.speakOrder.slice();
+
+  advance(61000); // SPEAK_MS
+  check('W22 설명 시간을 넘기면 다음 사람에게 대화권이 넘어간다',
+    room.stateFor(order[1]).round.speaker.id === order[1],
+    room.stateFor(order[1]).round.speaker.nickname);
+  check('W22 넘긴 사람은 설명한 것으로 치지 않는다',
+    room._debug().round.spoken.size === 0);
+  check('W22 넘겼다는 사실이 대화에 남는다',
+    room.stateFor(order[1]).chat.some((m) => m.code === 'turnSkipped'));
+}
+
+function w23_disconnectedSpeakerSkipped() {
+  const { room } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const order = room._debug().round.speakOrder.slice();
+
+  room.disconnect(order[0]); // 말할 차례인 사람이 창을 닫았다
+  check('W23 차례인 사람이 나가면 60초를 기다리지 않고 다음 사람으로 넘어간다',
+    room.stateFor(order[1]).round.speaker.id === order[1],
+    room.stateFor(order[1]).round.speaker.nickname);
+
+  room.say(order[1], '길쭉합니다');
+  room.say(order[2], '차갑습니다');
+  check('W23 남은 사람이 다 말하면 자유 채팅으로 넘어간다',
+    room._debug().phase === 'free', room._debug().phase);
+}
+
+function w24_rejectedProposalReturnsToFree() {
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const [a, b, c] = idsOf(players);
+  passTurns(room);
+
+  room.callVote(a);
+  room.respondProposal(a, false);
+  room.respondProposal(b, false);
+  room.respondProposal(c, false);
+  check('W24 부결되면 설명 단계가 아니라 자유 채팅으로 돌아간다',
+    room._debug().phase === 'free', room._debug().phase);
+  check('W24 부결 뒤에도 대화권을 다시 요구하지 않는다 (아무나 말할 수 있다)',
+    room.say(b, '조금만 더 이야기해요') === null);
+
+  advance(61000);
+  check('W24 되돌아온 자유 채팅도 1분 뒤 투표로 간다',
+    room._debug().phase === 'voting', room._debug().phase);
+}
+
+function w25_stateExposesTurnProgress() {
+  const { room } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const order = room._debug().round.speakOrder.slice();
+  const s1 = room.stateFor(order[0]);
+
+  check('W25 화면이 그릴 수 있게 지금 차례를 상태에 담는다',
+    s1.round.speaker && s1.round.speaker.id === order[0], JSON.stringify(s1.round.speaker));
+  check('W25 내 차례인지 스스로 안다',
+    s1.you.myTurn === true && room.stateFor(order[1]).you.myTurn === false);
+  check('W25 진행 상황(몇 명 중 몇 명)이 상태에 있다',
+    s1.round.speakTotal === 3 && s1.round.spokenCount === 0,
+    `${s1.round.spokenCount}/${s1.round.speakTotal}`);
+
+  room.say(order[0], '둥급니다');
+  const s2 = room.stateFor(order[0]);
+  check('W25 말하고 나면 진행 상황이 올라간다', s2.round.spokenCount === 1);
+  check('W25 대화권 순서 자체는 상태로 새어 나가지 않는다',
+    !JSON.stringify(s2).includes('speakOrder'));
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
   w9_lateJoinerSpectates, w10_chatLock,
   w11_proposalMajority, w12_proposalRejected, w13_proposalTimeout, w14_twoPlayers, w15_tokenSeatCollision,
-  w16_emptyRoundIsAbandoned, w17_emptyProposalDoesNotPass, w18_spectatorCannotChat]) {
+  w16_emptyRoundIsAbandoned, w17_emptyProposalDoesNotPass, w18_spectatorCannotChat,
+  w19_oneTurnPerPerson, w20_freeChatAfterEveryoneSpoke, w21_voteOnlyAfterExplanations,
+  w22_turnTimeoutMovesOn, w23_disconnectedSpeakerSkipped, w24_rejectedProposalReturnsToFree,
+  w25_stateExposesTurnProgress]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 

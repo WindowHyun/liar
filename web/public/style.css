@@ -23,6 +23,7 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #participant-list li.spectator .name { color:#C5AECA; font-style:italic; }
 #participant-list .tag { margin-left:auto; font-size:10px; padding:1px 6px; border-radius:8px; background:#5A2A5C; color:#E4CDE8; flex-shrink:0; }
 #participant-list .tag.voted { background:#2BAC76; color:#fff; }
+#participant-list .tag.speaking { background:#ECB22E; color:#3F2E00; font-weight:700; }
 
 /* 전적은 버전 표기처럼 사이드바 맨 아래에 작고 흐리게 */
 #sidebar-foot { margin-top:auto; padding-top:16px; border-top:1px solid rgba(255,255,255,.1); }
@@ -69,9 +70,35 @@ input:disabled { opacity:.5; }
 .msg .text .who-hl { font-weight:700; }
 .msg .text .liar-hl { color:#791F1F; font-weight:700; }
 
-/* 대화 안에 들여쓰여 붙는 진행 블록 (찬반 / 투표 / 정답) */
+/* 대화가 비어 있을 때의 안내 */
+.chat-empty { font-size:13px; color:#8A8A8E; margin:6px 0 14px; }
+
+/* 결과를 대화에도 한 줄로 남긴다 - 나중에 되짚어 볼 수 있게 */
+.result-line { border-left:3px solid #D8D8DA; padding:2px 0 2px 10px; }
+.result-line b { margin-right:2px; }
+.result-line.win-liar { border-left-color:#C93A3A; }
+.result-line.win-liar b { color:#791F1F; }
+.result-line.win-citizens { border-left-color:#2BAC76; }
+.result-line.win-citizens b { color:#27500A; }
+.result-line.win-none { border-left-color:#B9B9BE; }
+.result-line.win-none b { color:#5B5B60; }
+
+/* 대화 안에 들여쓰여 붙는 진행 블록 (설명 / 자유 / 찬반 / 투표 / 정답) */
 #live-block:empty { display:none; }
 .meta-line { font-size:12px; color:#8A8A8E; margin:8px 0 0; }
+
+/* ── 설명 단계 ── */
+.turn-mic { margin-right:6px; }
+/* 내 차례일 때는 블록 자체가 눈에 띄어야 한다. 놓치면 그냥 넘어가 버린다. */
+.msg.my-turn { background:#FFF8E6; border-left:3px solid #ECB22E; border-radius:0 6px 6px 0; margin-left:-13px; padding:9px 10px 9px 10px; }
+.msg.my-turn .avatar { background:#ECB22E; color:#3F2E00; }
+
+/* 누가 설명을 마쳤는지 한 줄로 */
+.track { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+.pill { display:inline-flex; align-items:center; gap:5px; border:1px solid #E4E4E6; background:#F8F8F9; color:#8A8A8E; border-radius:12px; padding:3px 10px 3px 8px; font-size:12.5px; }
+.pill .em { font-size:12px; line-height:1; }
+.pill.done { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
+.pill.now { background:#FFF3D6; border-color:#EBD08A; color:#6B4E00; font-weight:700; }
 
 /* 찬반 - 슬랙 리액션 칩 */
 .chips { display:flex; gap:7px; margin-top:9px; flex-wrap:wrap; }
@@ -97,7 +124,16 @@ input:disabled { opacity:.5; }
 /* ───────────────── 결과 / 배너 ───────────────── */
 #result-panel { margin:0 20px 14px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; font-size:15px; text-align:center; }
 #result-panel .headline { font-weight:700; font-size:17px; margin-bottom:6px; }
-#result-panel .detail { font-size:13px; color:#616061; }
+#result-panel .why { font-size:13px; color:#616061; }
+/* 결과는 사실을 나란히 놓는다 - 누가 라이어였고, 제시어가 무엇이었는지 */
+#result-panel .facts { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; margin-top:11px; }
+#result-panel .fact { display:inline-flex; align-items:center; gap:7px; background:rgba(255,255,255,.72); border:1px solid rgba(0,0,0,.07); border-radius:14px; padding:4px 12px; font-size:13px; }
+#result-panel .fact .k { color:#616061; font-size:11.5px; }
+#result-panel .fact b { font-weight:700; }
+/* 같은 흰 카드면 이겼는지 졌는지 한눈에 안 들어온다 */
+#result-panel.win-liar { background:#FCEBEB; border-color:#F0CFCF; color:#791F1F; }
+#result-panel.win-citizens { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
+#result-panel.win-none { background:#EDEDF0; border-color:#DFDFE3; color:#5B5B60; }
 
 #banner { font-size:13px; padding:8px 20px; text-align:center; }
 #banner.warn { background:#FCEBEB; color:#791F1F; }
@@ -120,6 +156,9 @@ input:disabled { opacity:.5; }
 #send-btn svg { width:17px; height:17px; fill:#fff; }
 #send-btn:not(:disabled):hover { background:#00603F; }
 #send-btn:disabled { background:#D8D8DA; }
+/* 내 설명 차례에는 입력창이 스스로 알린다 */
+#composer.my-turn { background:#FFFBF0; }
+#composer.my-turn #chat-input { border-color:#ECB22E; box-shadow:0 0 0 2px rgba(236,178,46,.22); }
 
 /* ───────────────── 좁은 화면 [S-4] ───────────────── */
 @media (max-width: 720px) {
@@ -146,6 +185,8 @@ input:disabled { opacity:.5; }
   #composer { padding:10px 14px; }
 
   .opts, .guess-row { max-width:none; }
+  .msg.my-turn { margin-left:-10px; padding-left:7px; }
+  #result-panel .facts { gap:6px; }
   .opt { padding:10px 12px; }
   .chip { padding:7px 13px 7px 11px; }
   .chip .em { font-size:17px; }

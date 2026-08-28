@@ -36,6 +36,28 @@ function check(name, ok, detail) {
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 지금 대화권을 가진 창. 화면만 보고 찾는다 - 내부 상태를 들여다보면
+ * "서버는 맞는데 화면이 안 따라간" 경우를 놓친다.
+ */
+async function speakerPage(pages) {
+  for (const p of pages) {
+    if (await p.page.locator('#composer.my-turn').count()) return p;
+  }
+  return null;
+}
+
+/** 전원이 대화권을 한 번씩 써서 설명 단계를 끝낸다. */
+async function finishExplanations(pages) {
+  for (let guard = 0; guard < pages.length + 3; guard += 1) {
+    const sp = await speakerPage(pages);
+    if (!sp) return;
+    await sp.page.fill('#chat-input', `${sp.name}의 설명입니다`);
+    await sp.page.press('#chat-input', 'Enter');
+    await wait(300);
+  }
+}
+
 function waitForServer(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
@@ -95,15 +117,48 @@ async function main() {
   const liarHtml = await pages[liarIndex].page.content();
   check('X2 라이어 브라우저 전체에 제시어가 없다', !liarHtml.includes(word));
 
-  // 대화
-  await p1.page.fill('#chat-input', '빨갛습니다');
-  await p1.page.press('#chat-input', 'Enter');
-  await p2.page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), { timeout: 5000 });
-  check('X3 대화가 모두에게 보인다', (await p3.page.textContent('#chat')).includes('빨갛습니다'));
+  // ── 설명 단계: 랜덤으로 대화권을 넘기며 한 명씩. 1인 1회. ──
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
+  const speaking = await Promise.all(pages.map((p) => p.page.locator('#composer.my-turn').count()));
+  check('X3 대화권은 한 번에 한 명에게만 간다',
+    speaking.filter(Boolean).length === 1, speaking.join(','));
+
+  const first = await speakerPage(pages);
+  const others = pages.filter((p) => p !== first);
+  check('X3 차례가 아닌 사람의 입력창은 잠긴다',
+    (await others[0].page.isDisabled('#chat-input')) && (await others[1].page.isDisabled('#chat-input')));
+  check('X3 차례가 아닌 사람에게 누구 차례인지 알려 준다',
+    (await others[0].page.getAttribute('#chat-input', 'placeholder')).includes(first.name),
+    await others[0].page.getAttribute('#chat-input', 'placeholder'));
+  check('X3 설명 중에는 투표를 제안할 수 없다', await p1.page.isDisabled('#vote-btn'));
+
+  await first.page.fill('#chat-input', '빨갛습니다');
+  await first.page.press('#chat-input', 'Enter');
+  await others[0].page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), { timeout: 5000 });
+  check('X3 대화가 모두에게 보인다', (await others[1].page.textContent('#chat')).includes('빨갛습니다'));
+
+  await first.page.waitForFunction(() => !document.querySelector('#composer.my-turn'), { timeout: 5000 });
+  check('X3 [요청] 대화권은 1인 1회 - 말하고 나면 바로 잠긴다',
+    await first.page.isDisabled('#chat-input'));
+  check('X3 설명을 마친 사람은 목록에 완료로 표시된다',
+    (await first.page.textContent('#live-block .track')).includes('✅'));
+
+  // 남은 사람이 설명을 마치면 자유 채팅이 열린다
+  await finishExplanations(pages);
+  await Promise.all(pages.map((p) => p.page.waitForFunction(
+    () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), { timeout: 5000 })));
+  check('X3 전원이 설명을 마치면 자유 채팅으로 넘어간다',
+    (await p1.page.textContent('#chat-messages')).includes('설명이 모두 끝났습니다'));
+  // 대화에 남는 기록과 진행 블록이 같은 문장을 두 번 찍지 않는다
+  check('X3 자유 채팅 안내가 두 번 찍히지 않는다',
+    (await p1.page.textContent('#chat')).split('설명이 모두 끝났습니다').length === 2);
+  check('X3 자유 채팅에서는 전원의 입력창이 열린다',
+    !(await p1.page.isDisabled('#chat-input')) && !(await p3.page.isDisabled('#chat-input')));
+  check('X3 자유 채팅부터 투표를 제안할 수 있다', !(await p1.page.isDisabled('#vote-btn')));
 
   // 알림 띠는 대화가 넘칠 때만 의미가 있다. 스크롤이 생기도록 충분히 채운다.
   for (let i = 0; i < 14; i += 1) {
-    await p1.page.fill('#chat-input', `설명을 이어갑니다 ${i + 1}`);
+    await p1.page.fill('#chat-input', `이야기를 이어갑니다 ${i + 1}`);
     await p1.page.press('#chat-input', 'Enter');
   }
   await p1.page.waitForFunction(() => {
@@ -120,7 +175,10 @@ async function main() {
   check('X4 체크·X 이모지로 나온다',
     (await p2.page.textContent('#live-block .chip[data-agree="yes"]')).includes('✅') &&
     (await p2.page.textContent('#live-block .chip[data-agree="no"]')).includes('❌'));
-  check('X4 찬반 단계에서는 대화가 아직 열려 있다', !(await p1.page.isDisabled('#chat-input')));
+  check('X4 [이슈1] 찬반 단계부터 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
+  check('X4 [이슈1] 왜 잠겼는지 입력창이 알려 준다',
+    (await p1.page.getAttribute('#chat-input', 'placeholder')).includes('투표가 끝날 때까지'),
+    await p1.page.getAttribute('#chat-input', 'placeholder'));
 
   // 3명 중 1명만 O를 눌러도 아직 33%라 진행되지 않는다
   await p1.page.click('#live-block .chip[data-agree="yes"]');

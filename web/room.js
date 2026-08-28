@@ -28,6 +28,8 @@ const { normalizeWord } = require('./protocol');
 const WORD_LIST = require('./words');
 
 const MIN_PLAYERS = 2;
+const SPEAK_MS = 60000;         // 한 사람의 설명 차례 제한 시간
+const FREE_MS = 60000;          // 설명이 끝난 뒤 자유 채팅 1분
 const PROPOSAL_MS = 20000;      // 투표를 진행할지 묻는 찬반(O/X) 제한 시간
 const VOTE_MS = 30000;          // 투표 제한 시간
 const GUESS_MS = 30000;         // 라이어가 제시어를 맞힐 제한 시간
@@ -55,8 +57,10 @@ function createRoom(options) {
   // (개표 함수 tally()와 헷갈리지 않게 record로 둔다)
   const record = { rounds: 0, liarWins: 0, citizenWins: 0 };
 
-  // lobby | playing | proposal | voting | guess | result
-  //   proposal: 누가 투표 버튼을 누르면, 정말 투표로 갈지 다 같이 O/X로 정하는 단계
+  // lobby | turn | free | proposal | voting | guess | result
+  //   turn     : 랜덤 순서로 대화권을 넘기며 한 명씩 설명한다. 1인 1회.
+  //   free     : 전원이 한 번씩 말하고 나면 열리는 자유 채팅. 1분.
+  //   proposal : 누가 투표 버튼을 누르면, 정말 투표로 갈지 다 같이 O/X로 정하는 단계
   let phase = 'lobby';
   let round = null;
   let result = null;
@@ -180,7 +184,11 @@ function createRoom(options) {
     // 나간 사람을 계속 기다리면 투표가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
     else if (phase === 'proposal') settleProposal(false);
-    else changed();
+    else if (phase === 'turn' && currentSpeakerId() === playerId) {
+      // 말할 차례인 사람이 창을 닫았다. 돌아올 리 없는 60초를 다 기다릴 이유가 없다.
+      round.speakIndex += 1;
+      beginTurn();
+    } else changed();
   }
 
   // ───────────────────────────── 라운드 진행 ─────────────────────────────
@@ -207,12 +215,77 @@ function createRoom(options) {
       accusedId: null,
       votingEndsAt: null,
       guessEndsAt: null,
+      // 대화권을 넘길 순서. 매 판 새로 섞는다.
+      speakOrder: shuffle(roster.map((p) => p.id)),
+      speakIndex: 0,
+      spoken: new Set(),        // 대화권을 실제로 쓴 사람 (1인 1회)
+      speakEndsAt: null,
+      freeEndsAt: null,
     };
-    phase = 'playing';
+    phase = 'turn';
     chat.push({ kind: 'system', code: 'roundStart', text: '게임이 시작되었습니다.', at: now() });
     trimChat();
-    changed();
+    beginTurn();
     return null;
+  }
+
+  /** Fisher-Yates. 주입된 난수를 쓰므로 테스트에서 순서를 고정할 수 있다. */
+  function shuffle(list) {
+    const out = list.slice();
+    for (let i = out.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1));
+      const tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+    return out;
+  }
+
+  function currentSpeakerId() {
+    if (!round || phase !== 'turn') return null;
+    return round.speakOrder[round.speakIndex] || null;
+  }
+
+  /** 지금 차례인 사람에게 대화권을 준다. 이미 나간 사람은 건너뛴다. */
+  function beginTurn() {
+    clearPhaseTimer();
+    while (round.speakIndex < round.speakOrder.length) {
+      const id = round.speakOrder[round.speakIndex];
+      const player = players.get(id);
+      if (player && player.connected) break;
+      round.speakIndex += 1; // 나간 사람의 차례는 건너뛴다
+    }
+
+    if (round.speakIndex >= round.speakOrder.length) { beginFree(); return; }
+
+    round.speakEndsAt = now() + SPEAK_MS;
+    phaseTimer = setTimer(() => {
+      phaseTimer = null;
+      if (phase !== 'turn') return;
+      chat.push({ kind: 'system', code: 'turnSkipped', who: nameOf(currentSpeakerId()), at: now(),
+        text: `${nameOf(currentSpeakerId())}님이 설명 시간을 넘겼습니다.` });
+      trimChat();
+      round.speakIndex += 1;
+      beginTurn();
+    }, SPEAK_MS);
+    changed();
+  }
+
+  /** 전원이 한 번씩 말했다. 이제 다 같이 이야기한다. */
+  function beginFree() {
+    clearPhaseTimer();
+    phase = 'free';
+    round.speakEndsAt = null;
+    round.freeEndsAt = now() + FREE_MS;
+    chat.push({ kind: 'system', code: 'freeStart', at: now(),
+      text: '설명이 끝났습니다. 이제 자유롭게 이야기하세요. (1분)' });
+    trimChat();
+    // 1분이 다 되면 곧바로 투표로 간다. 이미 충분히 이야기했으니 찬반을 다시 묻지 않는다.
+    phaseTimer = setTimer(() => {
+      phaseTimer = null;
+      if (phase === 'free') beginVoting();
+    }, FREE_MS);
+    changed();
   }
 
   function trimChat() {
@@ -220,18 +293,32 @@ function createRoom(options) {
   }
 
   function say(playerId, text) {
-    // 투표·정답 단계에서는 대화를 막는다. 화면에서만 막으면 개발자 도구로 우회된다.
-    // 찬반(proposal) 단계는 "투표로 갈까요?"를 묻는 절차일 뿐이라 대화를 막지 않는다.
-    if (phase === 'voting' || phase === 'guess') return '지금은 대화할 수 없습니다.';
+    // 투표 버튼을 누른 순간(찬반)부터 결과가 날 때까지 대화를 막는다.
+    // 찬반 단계를 열어 두면 "나 아니야" 같은 변론이 오가서 투표가 흐려진다.
+    // 화면에서만 막으면 개발자 도구로 우회되므로 여기서 막는다.
+    if (phase === 'proposal' || phase === 'voting' || phase === 'guess') return '지금은 대화할 수 없습니다.';
     const player = players.get(playerId);
     if (!player) return '참가자가 아닙니다.';
     // [W-3] 라운드 도중에 들어온 사람은 관전자다. 제시어를 모르니 정보가 새지는 않지만,
     // 참가자와 구분 없이 말풍선이 떠서 판을 흐린다.
+    // (대화권 판정보다 먼저 봐야 한다. 아니면 관전자에게 "○○님 차례입니다"라고 답한다.)
     if (phase !== 'lobby' && phase !== 'result' && !inRound(playerId)) {
       return '이번 라운드는 관전 중입니다. 다음 라운드부터 참여할 수 있습니다.';
     }
+    // 설명 단계에서는 대화권을 가진 사람만, 그것도 한 번만 말한다.
+    if (phase === 'turn' && playerId !== currentSpeakerId()) {
+      return '지금은 ' + nameOf(currentSpeakerId()) + '님의 설명 차례입니다.';
+    }
     chat.push({ kind: 'chat', id: playerId, name: player.nickname, text: String(text).trim().slice(0, 300), at: now() });
     trimChat();
+
+    // 설명을 마쳤으면 대화권을 다음 사람에게 넘긴다.
+    if (phase === 'turn') {
+      round.spoken.add(playerId);
+      round.speakIndex += 1;
+      beginTurn();
+      return null;
+    }
     changed();
     return null;
   }
@@ -241,7 +328,8 @@ function createRoom(options) {
    * 찬성이 절반 이상이면 진행한다(4명 중 2명 O 2명 X도 50%라서 진행).
    */
   function callVote(playerId) {
-    if (phase !== 'playing') return '지금은 투표를 제안할 수 없습니다.';
+    if (phase === 'turn') return '아직 설명이 끝나지 않았습니다.';
+    if (phase !== 'free') return '지금은 투표를 제안할 수 없습니다.';
     if (!inRound(playerId)) return '이번 라운드 참가자가 아닙니다.';
 
     round.proposal = {
@@ -273,6 +361,8 @@ function createRoom(options) {
   function proposalCounts() {
     let agree = 0;
     let disagree = 0;
+    // 자유 채팅 시간이 다 되면 찬반 없이 곧바로 투표로 간다. 그때는 셀 것이 없다.
+    if (!round || !round.proposal) return { agree: 0, disagree: 0, total: activeRoster().length };
     for (const yes of round.proposal.answers.values()) {
       if (yes) agree += 1; else disagree += 1;
     }
@@ -308,7 +398,13 @@ function createRoom(options) {
     clearPhaseTimer();
     const { agree, disagree } = proposalCounts();
     round.proposal = null;
-    phase = 'playing';
+    // 부결되면 자유 채팅으로 돌아간다. 남은 시간을 다시 준다.
+    phase = 'free';
+    round.freeEndsAt = now() + FREE_MS;
+    phaseTimer = setTimer(() => {
+      phaseTimer = null;
+      if (phase === 'free') beginVoting();
+    }, FREE_MS);
     chat.push({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 설명을 이어가세요.`, at: now() });
     trimChat();
     changed();
@@ -316,12 +412,19 @@ function createRoom(options) {
 
   function beginVoting() {
     clearPhaseTimer();
+    // 찬반을 거쳐 왔는지, 자유 채팅 시간이 다 돼서 그냥 넘어온 것인지 구분한다.
+    const byProposal = !!round.proposal;
     const { agree, disagree } = proposalCounts();
     round.proposal = null;
+    round.freeEndsAt = null;
     round.votes.clear();
     round.votingEndsAt = now() + VOTE_MS;
     phase = 'voting';
-    chat.push({ kind: 'system', code: 'votingStarted', agree, disagree, text: `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`, at: now() });
+    chat.push({ kind: 'system', code: 'votingStarted', byProposal, agree, disagree,
+      text: byProposal
+        ? `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`
+        : '자유 대화 시간이 끝났습니다. 투표를 진행합니다.',
+      at: now() });
     trimChat();
     phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
     changed();
@@ -408,6 +511,18 @@ function createRoom(options) {
     if (winner === 'liar') record.liarWins += 1;
     else if (winner === 'citizens') record.citizenWins += 1;
 
+    // 결과는 화면 아래 카드로도 보이지만, 대화에도 남겨야 다음 판을 시작한 뒤에
+    // "아까 누가 라이어였지?"를 되짚을 수 있다.
+    chat.push({
+      kind: 'system', code: 'result', at: now(),
+      winner, reason,
+      liarName: result.liar.nickname,
+      word: result.word,
+      guess: result.guess || null,
+      text: (winner === 'liar' ? 'Oliveyoung 승리' : winner === 'citizens' ? '시민 팀 승리' : '라운드 취소'),
+    });
+    trimChat();
+
     phase = 'result';
     round = null;
     changed();
@@ -434,6 +549,9 @@ function createRoom(options) {
         word: iAmIn && round && round.liarId !== me.id ? round.word : null,
         category: iAmIn && round ? round.category : null,
         canGuess: phase === 'guess' && !!round && round.accusedId === me.id,
+        // 지금 내 대화권 차례인가. 화면은 이걸로 입력창을 열고 닫는다.
+        myTurn: phase === 'turn' && currentSpeakerId() === me.id,
+        spoken: !!round && round.spoken.has(me.id),
         hasVoted: phase === 'voting' && !!round && round.votes.has(me.id),
         // 찬반 단계에서 내가 이미 답했는지. null이면 아직 안 답함.
         proposalAnswer: phase === 'proposal' && !!round && round.proposal.answers.has(me.id)
@@ -447,10 +565,20 @@ function createRoom(options) {
         // 누가 아직 안 던졌는지만 보인다. 누구에게 던졌는지는 보이지 않는다.
         voted: phase === 'voting' && !!round && round.votes.has(p.id),
         answered: phase === 'proposal' && !!round && round.proposal.answers.has(p.id),
+        // 설명 단계에서 지금 말할 차례인지 / 이미 설명을 마쳤는지
+        speaking: phase === 'turn' && currentSpeakerId() === p.id,
+        spoke: !!round && round.spoken.has(p.id),
       })),
       round: round ? {
         category: round.category,
         roster: round.roster,
+        // 설명 단계 진행 상황. 화면이 "누구 차례 / 몇 명 남았는지"를 이걸로 그린다.
+        speaker: phase === 'turn' && currentSpeakerId()
+          ? { id: currentSpeakerId(), nickname: nameOf(currentSpeakerId()) } : null,
+        speakEndsAt: phase === 'turn' ? round.speakEndsAt : null,
+        freeEndsAt: phase === 'free' ? round.freeEndsAt : null,
+        spokenCount: round.spoken.size,
+        speakTotal: round.speakOrder.length,
         proposal: round.proposal ? Object.assign(
           { by: round.proposal.by, byName: round.proposal.byName, endsAt: round.proposal.endsAt },
           proposalCounts(),

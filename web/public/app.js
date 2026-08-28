@@ -38,6 +38,17 @@ var liveSignature = '';    // 진행 블록을 필요할 때만 다시 그리기
 
 function $(id) { return document.getElementById(id); }
 
+/**
+ * 받침에 맞는 조사를 고른다. 한글이 아니면(영문 등) 받침 있는 쪽을 쓴다.
+ * 이 게임에서 영문은 위장 단어 Oliveyoung뿐이고, 그건 "Oliveyoung은"이 맞다.
+ */
+function josa(word, withBatchim, without) {
+  var last = String(word == null ? '' : word).trim().slice(-1);
+  var code = last.charCodeAt(0);
+  if (!(code >= 0xAC00 && code <= 0xD7A3)) return withBatchim;
+  return (code - 0xAC00) % 28 !== 0 ? withBatchim : without;
+}
+
 function readStored(key) {
   try { return window.localStorage.getItem(key) || null; } catch (e) { return null; }
 }
@@ -199,7 +210,13 @@ function scrollChatToBottom() {
   updateJumpBar();
 }
 
-var JUMP_TEXT = { proposal: '투표 여부를 정하는 중입니다', voting: '투표가 진행 중입니다', guess: '정답을 기다리는 중입니다' };
+var JUMP_TEXT = {
+  turn: '설명이 진행 중입니다',
+  free: '자유 대화가 진행 중입니다',
+  proposal: '투표 여부를 정하는 중입니다',
+  voting: '투표가 진행 중입니다',
+  guess: '정답을 기다리는 중입니다',
+};
 function updateJumpBar() {
   var bar = $('jump-bar');
   var phase = state ? state.phase : null;
@@ -285,8 +302,26 @@ function systemLine(m) {
   } else if (m.code === 'proposalCalled' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 투표를 제안했습니다.'));
+  } else if (m.code === 'result') {
+    p.className = 'text result-line ' + (m.winner === 'liar' ? 'win-liar' : m.winner === 'citizens' ? 'win-citizens' : 'win-none');
+    var head = document.createElement('b');
+    head.textContent = m.winner === 'liar' ? LABELS.liar + ' 승리'
+      : m.winner === 'citizens' ? '시민 팀 승리' : '라운드 취소';
+    p.appendChild(head);
+    var tail = document.createElement('span');
+    tail.textContent = '  ' + LABELS.liar + josa(LABELS.liar, '은 ', '는 ') + m.liarName
+      + '님, 제시어는 "' + m.word + '"' + josa(m.word, '이었습니다.', '였습니다.');
+    p.appendChild(tail);
+  } else if (m.code === 'turnSkipped' && m.who) {
+    p.appendChild(who(m.who));
+    p.appendChild(document.createTextNode('님이 설명 시간을 넘겼습니다.'));
+  } else if (m.code === 'freeStart') {
+    p.textContent = '설명이 모두 끝났습니다. 이제 자유롭게 이야기하세요. (1분)';
   } else if (m.code === 'votingStarted') {
-    p.textContent = '투표를 진행합니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
+    // 찬반을 거쳐 온 경우와, 자유 대화 시간이 다 돼서 그냥 넘어온 경우를 구분한다.
+    p.textContent = m.byProposal === false
+      ? '자유 대화 시간이 끝났습니다. 투표를 진행합니다.'
+      : '투표를 진행합니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
   } else if (m.code === 'proposalRejected') {
     p.textContent = '투표 제안이 부결되었습니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ') 설명을 이어가세요.';
   } else {
@@ -302,6 +337,16 @@ function renderChat(s) {
 
   var box = $('chat-messages');
   box.innerHTML = '';
+
+  if (s.chat.length === 0) {
+    var empty = document.createElement('p');
+    empty.className = 'chat-empty';
+    empty.textContent = s.phase === 'lobby'
+      ? '아직 대화가 없습니다. 참가자가 모이면 게임을 시작하세요.'
+      : '아직 대화가 없습니다.';
+    box.appendChild(empty);
+  }
+
   s.chat.forEach(function (m) {
     // 투표 제안은 아래 진행 블록이 같은 내용을 보여준다. 두 번 찍히지 않게 건너뛴다.
     // (제안의 결말인 "진행합니다 / 부결되었습니다"는 기록으로 남긴다.)
@@ -330,7 +375,11 @@ function renderLive(s) {
   var wasAtBottom = isChatAtBottom();
   block.innerHTML = '';
 
-  if (s.phase === 'proposal' && s.round && s.round.proposal && s.you && s.you.inRound) {
+  if (s.phase === 'turn' && s.round && s.round.speaker) {
+    block.appendChild(buildTurn(s));
+  } else if (s.phase === 'free' && s.round) {
+    block.appendChild(buildFree(s));
+  } else if (s.phase === 'proposal' && s.round && s.round.proposal && s.you && s.you.inRound) {
     block.appendChild(buildProposal(s));
   } else if (s.phase === 'voting' && s.round && s.you && s.you.inRound) {
     block.appendChild(buildVote(s));
@@ -344,6 +393,11 @@ function renderLive(s) {
 
 /** 다시 그릴지 판단하는 지문. 남은 시간은 뺀다(1초마다 숫자만 갈아 끼운다). */
 function liveSignatureOf(s) {
+  // 설명/자유 단계는 관전자에게도 보여 준다. 지금 무엇을 하는 중인지는 모두가 알아야 한다.
+  if (s.phase === 'turn' && s.round && s.round.speaker) {
+    return 't|' + s.round.speaker.id + '|' + s.round.spokenCount + '|' + s.round.speakTotal;
+  }
+  if (s.phase === 'free' && s.round) return 'f|' + s.round.spokenCount;
   if (!s.you || !s.you.inRound) return '';
   if (s.phase === 'proposal' && s.round && s.round.proposal) {
     var p = s.round.proposal;
@@ -354,6 +408,105 @@ function liveSignatureOf(s) {
   }
   if (s.phase === 'guess' && s.you.canGuess) return 'g';
   return '';
+}
+
+/**
+ * 설명 단계. 랜덤으로 대화권을 넘기며 한 명씩 설명한다. 1인 1회.
+ * 지금 누구 차례인지가 화면에서 제일 커야 한다 - 내 차례를 놓치면 그냥 넘어가 버린다.
+ */
+function buildTurn(s) {
+  var sp = s.round.speaker;
+  var mine = !!(s.you && s.you.myTurn);
+  var shell = messageShell({ system: true, at: s.round.speakEndsAt - 60000 });
+
+  var text = document.createElement('div');
+  text.className = 'text';
+  var mic = document.createElement('span');
+  mic.className = 'turn-mic';
+  mic.textContent = '🎙️';
+  text.appendChild(mic);
+  if (mine) {
+    var me = document.createElement('span');
+    me.className = 'who-hl';
+    me.textContent = '내 차례';
+    text.appendChild(me);
+    text.appendChild(document.createTextNode('입니다. 제시어를 한 번만 설명하세요.'));
+  } else {
+    var w = document.createElement('span');
+    w.className = 'who-hl';
+    w.textContent = sp.nickname;
+    text.appendChild(w);
+    text.appendChild(document.createTextNode('님이 설명하는 중입니다.'));
+  }
+  shell.body.appendChild(text);
+  shell.body.appendChild(speakerTrack(s));
+
+  var meta = document.createElement('p');
+  meta.className = 'meta-line';
+  meta.id = 'live-meta';
+  meta.textContent = metaTurn(s);
+  shell.body.appendChild(meta);
+
+  if (mine) shell.classList.add('my-turn');
+  return shell;
+}
+
+/** 누가 설명을 마쳤는지 한 줄로. 이름 앞에 ✅(마침) / 🎙️(지금) / ⏳(대기). */
+function speakerTrack(s) {
+  var track = document.createElement('div');
+  track.className = 'track';
+  var byId = {};
+  s.players.forEach(function (p) { byId[p.id] = p; });
+
+  s.round.roster.forEach(function (r) {
+    var p = byId[r.id] || {};
+    var pill = document.createElement('span');
+    pill.className = 'pill' + (p.speaking ? ' now' : p.spoke ? ' done' : '');
+    var em = document.createElement('span');
+    em.className = 'em';
+    em.textContent = p.speaking ? '🎙️' : p.spoke ? '✅' : '⏳';
+    pill.appendChild(em);
+    pill.appendChild(document.createTextNode(r.nickname));
+    track.appendChild(pill);
+  });
+  return track;
+}
+
+function metaTurn(s) {
+  return '남은 시간 ' + secondsLeft(s.round.speakEndsAt) + '초 · '
+    + s.round.speakTotal + '명 중 ' + s.round.spokenCount + '명 설명함'
+    + ' · 대화권은 1인 1회입니다';
+}
+
+/** 전원이 설명을 마친 뒤의 자유 대화 1분. 여기서만 투표를 제안할 수 있다. */
+function buildFree(s) {
+  var shell = messageShell({ system: true, at: s.round.freeEndsAt - 60000 });
+
+  var text = document.createElement('div');
+  text.className = 'text';
+  var em = document.createElement('span');
+  em.className = 'turn-mic';
+  em.textContent = '💬';
+  text.appendChild(em);
+  text.appendChild(document.createTextNode('자유 대화 중입니다. 누가 '));
+  var l = document.createElement('span');
+  l.className = 'liar-hl';
+  l.textContent = LABELS.liar;
+  text.appendChild(l);
+  text.appendChild(document.createTextNode('일지 이야기해 보세요.'));
+  shell.body.appendChild(text);
+
+  var meta = document.createElement('p');
+  meta.className = 'meta-line';
+  meta.id = 'live-meta';
+  meta.textContent = metaFree(s);
+  shell.body.appendChild(meta);
+  return shell;
+}
+
+function metaFree(s) {
+  return '남은 시간 ' + secondsLeft(s.round.freeEndsAt) + '초 · '
+    + '🎧 를 누르면 투표를 제안할 수 있습니다 · 시간이 다 되면 바로 투표로 넘어갑니다';
 }
 
 function buildProposal(s) {
@@ -492,7 +645,9 @@ function metaGuess(s) { return '남은 시간 ' + secondsLeft(s.round.guessEndsA
 function refreshLiveTimers(s) {
   var meta = $('live-meta');
   if (!meta || !s.round) return;
-  if (s.phase === 'proposal' && s.round.proposal) meta.textContent = metaProposal(s);
+  if (s.phase === 'turn') meta.textContent = metaTurn(s);
+  else if (s.phase === 'free') meta.textContent = metaFree(s);
+  else if (s.phase === 'proposal' && s.round.proposal) meta.textContent = metaProposal(s);
   else if (s.phase === 'voting') meta.textContent = metaVote(s);
   else if (s.phase === 'guess') meta.textContent = metaGuess(s);
 }
@@ -516,6 +671,11 @@ function renderParticipants(s) {
     var tagText = null;
     var tagClass = 'tag';
     if (!p.connected) tagText = '끊김';
+    else if (s.phase === 'turn' && p.inRound) {
+      if (p.speaking) { tagText = '설명 중'; tagClass += ' speaking'; }
+      else if (p.spoke) { tagText = '완료'; tagClass += ' voted'; }
+      else tagText = '대기';
+    } else if (s.phase === 'free' && p.inRound && p.spoke) { tagText = '완료'; tagClass += ' voted'; }
     else if (s.phase === 'proposal' && p.inRound) { tagText = p.answered ? '답함' : '대기'; if (p.answered) tagClass += ' voted'; }
     else if (s.phase === 'voting' && p.inRound) { tagText = p.voted ? '투표함' : '대기'; if (p.voted) tagClass += ' voted'; }
     else if (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound) tagText = '관전';
@@ -568,21 +728,79 @@ function renderResult(s) {
     guessTimeout: LABELS.liar + '이 제한 시간 안에 제시어를 맞히지 못했습니다.',
     hostLeft: '게임을 진행하던 사람의 접속이 끊겨 라운드가 취소되었습니다.',
     guess: r.winner === 'liar'
-      ? LABELS.liar + '이 제시어를 맞혔습니다! ("' + r.guess + '")'
-      : LABELS.liar + '이 제시어를 맞히지 못했습니다. ("' + r.guess + '")',
+      ? LABELS.liar + '이 제시어를 맞혔습니다!'
+      : LABELS.liar + '이 제시어를 맞히지 못했습니다.',
   };
 
-  panel.classList.remove('hidden');
+  // 승패에 따라 색이 달라진다. 같은 흰 카드면 이겼는지 졌는지 한눈에 안 들어온다.
+  panel.className = r.winner === 'liar' ? 'win-liar' : r.winner === 'citizens' ? 'win-citizens' : 'win-none';
   panel.innerHTML = '';
+
   var headline = document.createElement('div');
   headline.className = 'headline';
-  headline.textContent = r.winner === 'liar' ? LABELS.liar + ' 승리!' : '시민 팀 승리!';
-  var detail = document.createElement('div');
-  detail.className = 'detail';
-  detail.textContent = (reasons[r.reason] || '') + ' · ' + LABELS.liar + '는 ' + r.liar.nickname
-    + '님, 제시어는 "' + r.word + '"였습니다.';
+  headline.textContent = r.winner === 'liar' ? LABELS.liar + ' 승리!'
+    : r.winner === 'citizens' ? '시민 팀 승리!' : '라운드 취소';
   panel.appendChild(headline);
-  panel.appendChild(detail);
+
+  var why = document.createElement('div');
+  why.className = 'why';
+  why.textContent = reasons[r.reason] || '';
+  panel.appendChild(why);
+
+  var facts = document.createElement('div');
+  facts.className = 'facts';
+  facts.appendChild(fact(LABELS.liar, r.liar.nickname));
+  facts.appendChild(fact('제시어', r.word));
+  if (r.guess) facts.appendChild(fact('제출한 답', r.guess));
+  panel.appendChild(facts);
+}
+
+function fact(label, value) {
+  var box = document.createElement('div');
+  box.className = 'fact';
+  var k = document.createElement('span');
+  k.className = 'k';
+  k.textContent = label;
+  var v = document.createElement('b');
+  v.textContent = value;
+  box.appendChild(k);
+  box.appendChild(v);
+  return box;
+}
+
+/**
+ * 입력창을 지금 쓸 수 있는지, 못 쓴다면 왜 못 쓰는지. 서버 say()와 같은 규칙이다.
+ * 화면에서만 막으면 개발자 도구로 우회되므로 서버가 최종 판정을 하고, 여기서는
+ * "왜 회색인지"를 알려 주는 역할만 한다. 그냥 회색이면 고장으로 보인다.
+ */
+function applyComposer(s) {
+  var input = $('chat-input');
+  var locked = true;
+  var hint = '댓글 남기기...';
+
+  if (s.phase === 'lobby' || s.phase === 'result') {
+    locked = false;
+  } else if (!s.you || !s.you.inRound) {
+    hint = '이번 라운드는 관전 중입니다';
+  } else if (s.phase === 'turn') {
+    if (s.you.myTurn) {
+      locked = false;
+      hint = '내 차례입니다. 제시어를 한 번만 설명하세요';
+    } else {
+      hint = (s.round && s.round.speaker ? s.round.speaker.nickname + '님이 설명하는 중입니다' : '설명이 진행 중입니다');
+    }
+  } else if (s.phase === 'free') {
+    locked = false;
+    hint = '자유롭게 이야기하세요...';
+  } else {
+    // 투표 버튼을 누른 순간(찬반)부터 결과가 날 때까지 대화를 막는다.
+    hint = '투표가 끝날 때까지 대화할 수 없습니다';
+  }
+
+  input.disabled = locked;
+  $('send-btn').disabled = locked;
+  input.placeholder = hint;
+  document.getElementById('composer').classList.toggle('my-turn', !locked && s.phase === 'turn');
 }
 
 function render(s) {
@@ -596,22 +814,22 @@ function render(s) {
   renderLive(s);
   renderResult(s);
 
+  var lobbyish = s.phase === 'lobby' || s.phase === 'result';
   $('start-btn').disabled = !s.canStart;
   $('start-btn').textContent = s.phase === 'result' ? '다음 라운드' : '게임 시작';
-  $('start-btn').classList.toggle('hidden', s.phase === 'playing' || s.phase === 'proposal' || s.phase === 'voting' || s.phase === 'guess');
-  $('vote-btn').disabled = !(s.phase === 'playing' && s.you && s.you.inRound);
+  $('start-btn').classList.toggle('hidden', !lobbyish);
+  // 투표 제안은 자유 대화 때만. 설명이 끝나기 전에는 누를 수 없다.
+  $('vote-btn').disabled = !(s.phase === 'free' && s.you && s.you.inRound);
+  $('vote-btn').title = s.phase === 'turn' ? '설명이 끝나면 투표를 제안할 수 있습니다' : '투표 제안';
 
-  // 대화는 투표·정답 단계에서만 잠긴다. 서버도 같은 규칙으로 막는다.
-  var chatLocked = s.phase === 'voting' || s.phase === 'guess';
-  $('chat-input').disabled = chatLocked;
-  $('send-btn').disabled = chatLocked;
+  applyComposer(s);
 
   if (s.phase !== 'lobby' && s.phase !== 'result' && s.you && !s.you.inRound) {
     showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.');
   }
 
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  if (s.phase === 'proposal' || s.phase === 'voting' || s.phase === 'guess') {
+  if (s.phase !== 'lobby' && s.phase !== 'result') {
     tickTimer = setInterval(function () { if (state) refreshLiveTimers(state); }, 1000);
   }
   updateJumpBar();
