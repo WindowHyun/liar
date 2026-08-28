@@ -101,35 +101,70 @@ async function main() {
   await p2.page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), { timeout: 5000 });
   check('X3 대화가 모두에게 보인다', (await p3.page.textContent('#chat')).includes('빨갛습니다'));
 
-  // 투표 제안 - 먼저 다 같이 O/X로 진행 여부를 정한다
+  // 알림 띠는 대화가 넘칠 때만 의미가 있다. 스크롤이 생기도록 충분히 채운다.
+  for (let i = 0; i < 14; i += 1) {
+    await p1.page.fill('#chat-input', `설명을 이어갑니다 ${i + 1}`);
+    await p1.page.press('#chat-input', 'Enter');
+  }
+  await p1.page.waitForFunction(() => {
+    const box = document.getElementById('chat');
+    return box.scrollHeight > box.clientHeight + 60;
+  }, { timeout: 5000 });
+
+  // 투표 제안 - 먼저 다 같이 O/X로 진행 여부를 정한다.
+  // 찬반·투표는 대화 흐름 안(#live-block)에 들여쓰여 나온다.
   await p1.page.click('#vote-btn');
-  await Promise.all(pages.map((p) => p.page.waitForSelector('#proposal-panel:not(.hidden)', { timeout: 5000 })));
-  check('X4 투표 버튼을 누르면 전원 화면에 O/X가 뜬다',
-    (await p2.page.textContent('#proposal-panel')).includes('진행할까요'));
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .chip', { timeout: 5000 })));
+  check('X4 투표 버튼을 누르면 전원 대화창에 O/X 칩이 뜬다',
+    (await p2.page.textContent('#live-block')).includes('진행할까요'));
+  check('X4 체크·X 이모지로 나온다',
+    (await p2.page.textContent('#live-block .chip[data-agree="yes"]')).includes('✅') &&
+    (await p2.page.textContent('#live-block .chip[data-agree="no"]')).includes('❌'));
   check('X4 찬반 단계에서는 대화가 아직 열려 있다', !(await p1.page.isDisabled('#chat-input')));
 
   // 3명 중 1명만 O를 눌러도 아직 33%라 진행되지 않는다
-  await p1.page.click('#proposal-yes');
+  await p1.page.click('#live-block .chip[data-agree="yes"]');
   await wait(400);
   check('X4 찬성 1/3이면 아직 투표로 넘어가지 않는다',
-    await p2.page.isVisible('#proposal-panel'));
+    (await p2.page.textContent('#live-block')).includes('진행할까요'));
 
   // 두 번째 O로 2/3 → 50% 이상이라 투표로 넘어간다
-  await p2.page.click('#proposal-yes');
-  await Promise.all(pages.map((p) => p.page.waitForSelector('#vote-panel:not(.hidden)', { timeout: 5000 })));
-  check('X4 찬성이 절반을 넘으면 투표로 넘어간다', true);
+  await p2.page.click('#live-block .chip[data-agree="yes"]');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .opt, #live-block .meta-line', { timeout: 5000 })));
+  check('X4 찬성이 절반을 넘으면 투표로 넘어간다',
+    (await p1.page.textContent('#live-block')).includes('한 명을 고르세요'));
   check('X4 투표 중에는 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
+
+  // [2번] 위로 올라가 있으면 하단에 진행 중이라고 알리는 띠가 뜬다.
+  // 투표가 대화 안으로 들어가면서 생긴 위험이라 여기서 고정한다.
+  check('X4 맨 아래를 보고 있을 때는 알림 띠가 없다', !(await p1.page.isVisible('#jump-bar')));
+  await p1.page.evaluate(() => { document.getElementById('chat').scrollTop = 0; });
+  await wait(300);
+  check('X4 [2번] 위로 올리면 "투표가 진행 중입니다" 띠가 뜬다',
+    (await p1.page.isVisible('#jump-bar')) &&
+    (await p1.page.textContent('#jump-bar')).includes('투표가 진행 중'),
+    (await p1.page.textContent('#jump-bar')).trim());
+  await p1.page.click('#jump-bar');
+  await wait(300);
+  check('X4 [2번] 띠를 누르면 맨 아래로 내려가고 띠가 사라진다',
+    !(await p1.page.isVisible('#jump-bar')));
 
   const liarName = pages[liarIndex].name;
   for (let i = 0; i < pages.length; i += 1) {
     const target = i === liarIndex ? pages[(i + 1) % pages.length].name : liarName;
-    await pages[i].page.click(`#vote-buttons button:has-text("${target}")`);
+    await pages[i].page.click(`#live-block .opt:has-text("${target}")`);
   }
 
   // 라이어가 지목됐으므로 정답 단계
-  await pages[liarIndex].page.waitForSelector('#guess-panel:not(.hidden)', { timeout: 5000 });
+  await pages[liarIndex].page.waitForSelector('#guess-input', { timeout: 5000 });
   check('X5 지목된 라이어에게만 정답창이 뜬다',
-    !(await pages[(liarIndex + 1) % 3].page.isVisible('#guess-panel')));
+    (await pages[(liarIndex + 1) % 3].page.locator('#guess-input').count()) === 0);
+
+  // 요청: "System : ○○○이 (라이어)로 지목되었습니다"
+  const accusedLine = await pages[0].page.textContent('#chat-messages');
+  check('X5 지목 안내가 System 메시지로 나온다',
+    accusedLine.includes(liarName + '님이 Oliveyoung으로 지목되었습니다'),
+    accusedLine.split('\n').map((t) => t.trim()).filter(Boolean).slice(-1)[0]);
 
   await pages[liarIndex].page.fill('#guess-input', '전혀다른답');
   await pages[liarIndex].page.press('#guess-input', 'Enter');
@@ -151,7 +186,22 @@ async function main() {
     (await p2.page.textContent('#participant-list')).includes('철수') &&
     (await p2.page.textContent('#result-panel')).includes('시민 팀 승리'));
 
-  check('X8 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+  // 요청한 화면 문구·배치
+  check('X8 전적이 사이드바 하단에 버전처럼 표시된다',
+    (await p1.page.textContent('#tally-label')).includes('판 ·'),
+    (await p1.page.textContent('#tally-label')).trim());
+  check('X8 사이드바 목록 제목이 Oliveyoung이다',
+    (await p1.page.textContent('#sidebar .label')).trim() === 'Oliveyoung');
+  check('X8 인원수가 허들 버튼 왼쪽에 숫자로 나온다',
+    (await p1.page.textContent('#member-count')).trim() === '3');
+  check('X8 투표 버튼이 헤드셋이다',
+    (await p1.page.textContent('#vote-btn')).trim() === '🎧');
+  check('X8 입력창 안내가 "댓글 남기기..."다',
+    (await p1.page.getAttribute('#chat-input', 'placeholder')) === '댓글 남기기...');
+  check('X8 전송 버튼이 종이비행기 아이콘이다',
+    (await p1.page.locator('#send-btn svg').count()) === 1);
+
+  check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }
 
 main()

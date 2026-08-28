@@ -10,6 +10,8 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #join-btn { width:100%; height:40px; background:#3F0E40; color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer; }
 
 #screen-game { display:flex; height:100vh; }
+
+/* ───────────────── 사이드바 ───────────────── */
 #sidebar { width:230px; background:#3F0E40; color:#fff; padding:20px 16px; flex-shrink:0; display:flex; flex-direction:column; }
 #sidebar h2 { font-size:15px; margin:0 0 4px; }
 #sidebar .sub { font-size:12px; color:#D1B3D6; margin:0 0 20px; }
@@ -21,44 +23,79 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #participant-list li.spectator .name { color:#C5AECA; font-style:italic; }
 #participant-list .tag { margin-left:auto; font-size:10px; padding:1px 6px; border-radius:8px; background:#5A2A5C; color:#E4CDE8; flex-shrink:0; }
 #participant-list .tag.voted { background:#2BAC76; color:#fff; }
-#conn-hint { margin-top:auto; padding-top:16px; font-size:11px; color:#B695BC; line-height:1.5; }
 
+/* 전적은 버전 표기처럼 사이드바 맨 아래에 작고 흐리게 */
+#sidebar-foot { margin-top:auto; padding-top:16px; border-top:1px solid rgba(255,255,255,.1); }
+#sidebar-foot p { margin:0; font-size:11px; color:#9B7CA1; line-height:1.6; }
+#tally-label { font-variant-numeric:tabular-nums; }
+#tally-label:empty { display:none; }
+#conn-hint:empty { display:none; }
+
+/* ───────────────── 상단 바 ───────────────── */
 #main { flex:1; display:flex; flex-direction:column; min-width:0; }
-#topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid #E4E4E6; background:#fff; }
+#topbar { display:flex; align-items:center; justify-content:space-between; padding:10px 20px; border-bottom:1px solid #E4E4E6; background:#fff; }
 #topbar h2 { font-size:15px; margin:0; }
-#topbar-actions { display:flex; gap:8px; }
-#start-btn { height:32px; padding:0 14px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; font-size:13px; cursor:pointer; }
-#vote-btn { background:#FCEBEB; color:#791F1F; border:1px solid #F0C7C7; border-radius:14px; height:32px; padding:0 14px; font-size:13px; font-weight:700; cursor:pointer; }
-button:disabled { opacity:0.45; cursor:default; }
-input:disabled { opacity:0.5; }
+#topbar-actions { display:flex; align-items:center; gap:8px; }
 
+/* 슬랙처럼 사람 아이콘 + 숫자만 */
+#member-count { display:inline-flex; align-items:center; gap:5px; border:1px solid #D8D8DA; border-radius:14px; padding:4px 10px 4px 8px; font-size:13px; color:#1D1C1D; }
+#member-count svg { width:15px; height:15px; fill:#616061; }
+#member-count b { font-weight:500; font-variant-numeric:tabular-nums; }
+
+/* 슬랙 허들 버튼처럼 */
+#vote-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:30px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; cursor:pointer; padding:0; }
+#vote-btn .em { font-size:16px; line-height:1; }
+#vote-btn:not(:disabled):hover { background:#F0EFF1; }
+#start-btn { height:30px; padding:0 13px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; font-size:13px; cursor:pointer; }
+button:disabled { opacity:.45; cursor:default; }
+input:disabled { opacity:.5; }
+
+/* ───────────────── 역할 카드 ───────────────── */
 #role-card { margin:14px 20px 0; padding:12px 16px; border-radius:8px; font-size:13px; }
 #role-card.citizen { background:#EAF3DE; color:#27500A; }
 #role-card.liar { background:#FCEBEB; color:#791F1F; }
 #role-card.pending { background:#EDEDF0; color:#5B5B60; }
 
+/* ───────────────── 대화 ───────────────── */
 #chat { flex:1; overflow-y:auto; padding:14px 20px; }
 .msg { display:flex; gap:10px; margin-bottom:14px; }
 .msg .avatar { width:28px; height:28px; border-radius:6px; background:#7F77DD; color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.msg .name { font-size:13px; font-weight:700; }
-.msg .text { font-size:14px; margin-top:2px; word-break:break-word; }
-.sysmsg { font-size:12px; color:#8A8A8E; font-style:italic; margin-bottom:10px; }
+.msg .avatar.sys { background:#5A3D5C; font-size:13px; }
+.msg .body { min-width:0; flex:1; }
+.msg .who { font-size:13px; font-weight:700; display:flex; align-items:baseline; gap:6px; }
+.msg .who .app-tag { font-size:9.5px; font-weight:700; letter-spacing:.04em; background:#D9D3DA; color:#4A3A4C; padding:1px 4px; border-radius:3px; position:relative; top:-1px; }
+.msg .who .time { font-size:11px; font-weight:400; color:#8A8A8E; }
+.msg .text { font-size:14px; margin-top:2px; word-break:break-word; line-height:1.55; }
+.msg .text .who-hl { font-weight:700; }
+.msg .text .liar-hl { color:#791F1F; font-weight:700; }
 
-#composer { display:flex; gap:8px; padding:12px 20px; border-top:1px solid #E4E4E6; background:#fff; }
-#chat-input { flex:1; height:36px; border:1px solid #D8D8DA; border-radius:8px; padding:0 12px; font-size:13px; }
-#send-btn { height:36px; padding:0 14px; border:1px solid #D8D8DA; border-radius:8px; background:#fff; font-size:13px; cursor:pointer; }
+/* 대화 안에 들여쓰여 붙는 진행 블록 (찬반 / 투표 / 정답) */
+#live-block:empty { display:none; }
+.meta-line { font-size:12px; color:#8A8A8E; margin:8px 0 0; }
 
-#vote-panel, #guess-panel, #result-panel { margin:14px 20px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; }
-.panel-title { margin:0 0 8px; font-size:13px; }
-#vote-buttons button, #guess-panel button { margin:4px 6px 0 0; padding:6px 12px; border-radius:6px; border:1px solid #D8D8DA; background:#F5F5F7; cursor:pointer; font-size:13px; }
-#proposal-buttons { display:flex; gap:10px; margin-top:4px; }
-#proposal-buttons .ox { flex:0 0 auto; min-width:110px; padding:10px 16px; border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; }
-#proposal-buttons .ox.yes { border:1px solid #B6DDC4; background:#EAF3DE; color:#27500A; }
-#proposal-buttons .ox.no { border:1px solid #F0C7C7; background:#FCEBEB; color:#791F1F; }
-#proposal-buttons .ox.chosen { outline:2px solid #3F0E40; outline-offset:1px; }
-.panel-note { margin:8px 0 0; font-size:12px; color:#8A8A8E; }
-#guess-panel input { height:34px; border:1px solid #D8D8DA; border-radius:6px; padding:0 10px; font-size:13px; margin-right:6px; }
-#result-panel { font-size:15px; text-align:center; }
+/* 찬반 - 슬랙 리액션 칩 */
+.chips { display:flex; gap:7px; margin-top:9px; flex-wrap:wrap; }
+.chip { display:inline-flex; align-items:center; gap:6px; border:1px solid #D8D8DA; background:#fff; border-radius:14px; padding:4px 11px 4px 9px; font-size:13px; cursor:pointer; line-height:1.5; font-family:inherit; }
+.chip .em { font-size:15px; line-height:1; }
+.chip .n { color:#616061; font-size:12.5px; font-variant-numeric:tabular-nums; }
+.chip:hover { background:#F8F8F9; }
+.chip.picked { border-color:#1264A3; background:#E8F5FA; }
+.chip.picked .n { color:#1264A3; font-weight:700; }
+
+/* 투표 - 들여쓴 세로 목록 */
+.opts { display:flex; flex-direction:column; gap:6px; margin-top:9px; max-width:340px; }
+.opt { display:flex; align-items:center; gap:9px; border:1px solid #D8D8DA; background:#fff; border-radius:6px; padding:7px 11px; font-size:13.5px; cursor:pointer; text-align:left; font-family:inherit; color:inherit; }
+.opt:hover { background:#F8F8F9; }
+.opt .mini { width:20px; height:20px; border-radius:4px; background:#7F77DD; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.opt .cnt { margin-left:auto; font-size:12px; color:#8A8A8E; font-variant-numeric:tabular-nums; }
+
+/* 정답 입력 */
+.guess-row { display:flex; gap:6px; margin-top:9px; max-width:340px; }
+.guess-row input { flex:1; height:34px; border:1px solid #D8D8DA; border-radius:6px; padding:0 10px; font-size:13px; }
+.guess-row button { padding:0 14px; border-radius:6px; border:1px solid #D8D8DA; background:#F5F5F7; cursor:pointer; font-size:13px; font-family:inherit; }
+
+/* ───────────────── 결과 / 배너 ───────────────── */
+#result-panel { margin:0 20px 14px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; font-size:15px; text-align:center; }
 #result-panel .headline { font-weight:700; font-size:17px; margin-bottom:6px; }
 #result-panel .detail { font-size:13px; color:#616061; }
 
@@ -66,48 +103,54 @@ input:disabled { opacity:0.5; }
 #banner.warn { background:#FCEBEB; color:#791F1F; }
 #banner.ok { background:#EAF3DE; color:#27500A; }
 
-/* ───────────────────────── 좁은 화면 [S-4] ─────────────────────────
-   웹 버전은 참가자가 폰으로 붙을 수 있다. 가로 배치를 세로로 바꾸고,
-   참가자 목록은 접어서 대화에 자리를 내준다. */
+/* [2번] 진행 중 알림 띠 - 슬랙이 새 메시지를 알리는 방식 */
+#jump-bar {
+  display:block; width:calc(100% - 40px); margin:0 20px 8px; padding:7px 12px;
+  border:none; border-radius:14px; background:#1264A3; color:#fff;
+  font-size:12.5px; font-family:inherit; cursor:pointer; text-align:center;
+}
+#jump-bar:hover { background:#0F5388; }
+#jump-bar .arrow { margin-right:4px; }
+
+/* ───────────────── 입력창 ───────────────── */
+#composer { display:flex; gap:8px; padding:12px 20px; border-top:1px solid #E4E4E6; background:#fff; align-items:center; }
+#chat-input { flex:1; height:36px; border:1px solid #D8D8DA; border-radius:8px; padding:0 12px; font-size:13px; }
+/* 슬랙 전송 버튼처럼 초록 원형 + 종이비행기 */
+#send-btn { width:36px; height:36px; flex-shrink:0; border:none; border-radius:8px; background:#007A5A; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+#send-btn svg { width:17px; height:17px; fill:#fff; }
+#send-btn:not(:disabled):hover { background:#00603F; }
+#send-btn:disabled { background:#D8D8DA; }
+
+/* ───────────────── 좁은 화면 [S-4] ───────────────── */
 @media (max-width: 720px) {
   #screen-game { flex-direction: column; height: 100dvh; }
 
-  #sidebar {
-    width: 100%;
-    flex-shrink: 0;
-    padding: 10px 14px;
-    max-height: 38vh;
-    overflow-y: auto;
-  }
-  #sidebar h2, #sidebar .sub { display: none; }        /* 상단바에 이미 있다 */
-  #sidebar .label { margin: 0 0 6px; }
-  #participant-list { display: flex; flex-wrap: wrap; gap: 6px 14px; }
-  #participant-list li { padding: 2px 0; }
-  #participant-list .tag { margin-left: 6px; }
-  #conn-hint { margin-top: 10px; padding-top: 8px; }
+  #sidebar { width:100%; flex-shrink:0; padding:10px 14px; max-height:34vh; overflow-y:auto; }
+  #sidebar h2, #sidebar .sub { display:none; }
+  #sidebar .label { margin:0 0 6px; }
+  #participant-list { display:flex; flex-wrap:wrap; gap:6px 14px; }
+  #participant-list li { padding:2px 0; }
+  #participant-list .tag { margin-left:6px; }
+  #sidebar-foot { margin-top:10px; padding-top:8px; }
 
-  #main { flex: 1; min-height: 0; }
-  #topbar { padding: 10px 14px; }
-  #topbar h2 { font-size: 14px; }
-  #topbar-actions { gap: 6px; }
-  #start-btn, #vote-btn { padding: 0 10px; font-size: 12px; }
+  #main { flex:1; min-height:0; }
+  #topbar { padding:10px 14px; }
+  #topbar h2 { font-size:14px; }
+  #topbar-actions { gap:6px; }
+  #start-btn { padding:0 10px; font-size:12px; }
 
-  #role-card { margin: 10px 14px 0; padding: 10px 12px; }
-  #chat { padding: 10px 14px; }
-  #vote-panel, #guess-panel, #result-panel, #proposal-panel { margin: 10px 14px; padding: 12px; }
-  #composer { padding: 10px 14px; }
+  #role-card { margin:10px 14px 0; padding:10px 12px; }
+  #chat { padding:10px 14px; }
+  #result-panel { margin:0 14px 10px; padding:12px; }
+  #jump-bar { width:calc(100% - 28px); margin:0 14px 8px; }
+  #composer { padding:10px 14px; }
 
-  /* 손가락으로 누를 수 있는 크기로 */
-  #proposal-buttons { flex-direction: column; }
-  #proposal-buttons .ox { width: 100%; min-width: 0; padding: 14px 16px; }
-  #vote-buttons button { padding: 10px 14px; }
-  #guess-panel input { width: 100%; margin: 0 0 8px; }
-  #guess-panel button { width: 100%; margin: 0; }
-
-  #screen-join { margin: 32px 16px; padding: 24px 20px; }
+  .opts, .guess-row { max-width:none; }
+  .opt { padding:10px 12px; }
+  .chip { padding:7px 13px 7px 11px; }
+  .chip .em { font-size:17px; }
 }
 
-/* 폰에서 입력창을 누르면 브라우저가 화면을 확대하는 것을 막는다(16px 미만이면 확대됨) */
 @media (max-width: 720px) {
-  #nickname-input, #chat-input, #guess-input { font-size: 16px; }
+  #nickname-input, #chat-input, .guess-row input { font-size:16px; }
 }

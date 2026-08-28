@@ -13,17 +13,19 @@
     <p>닉네임을 입력하고 접속하세요.</p>
     <input id="nickname-input" placeholder="닉네임" maxlength="24" autocomplete="off" />
     <button id="join-btn">접속</button>
-    <p class="hint">같은 주소로 접속한 사람끼리 함께 플레이합니다. 최소 3명이 필요합니다.</p>
+    <p class="hint">같은 주소로 접속한 사람끼리 함께 플레이합니다. 최소 2명이 필요합니다.</p>
   </div>
 
   <div id="screen-game" class="hidden">
     <div id="sidebar">
       <h2 data-label="app">Slack</h2>
       <p class="sub">워크스페이스</p>
-      <p class="label">참가자 <span id="participant-count"></span></p>
+      <p class="label" data-label="liar">Oliveyoung</p>
       <ul id="participant-list"></ul>
-      <p class="label" id="tally-label"></p>
-      <p id="conn-hint"></p>
+      <div id="sidebar-foot">
+        <p id="tally-label"></p>
+        <p id="conn-hint"></p>
+      </div>
     </div>
 
     <div id="main">
@@ -32,50 +34,38 @@
       <div id="topbar">
         <h2 id="channel-name" data-label="channel"># Oliveyoung</h2>
         <div id="topbar-actions">
+          <!-- 슬랙처럼 인원수만, 허들(투표) 버튼 왼쪽에 -->
+          <span id="member-count" title="참가 인원">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 8a2.6 2.6 0 1 0 0-5.2A2.6 2.6 0 0 0 8 8Zm0 1.2c-2 0-4.5 1-4.5 2.6v1.4h9v-1.4c0-1.6-2.5-2.6-4.5-2.6Z"/></svg>
+            <b>0</b>
+          </span>
+          <button id="vote-btn" title="투표 시작" disabled>
+            <span class="em">🎧</span>
+          </button>
           <button id="start-btn">게임 시작</button>
-          <button id="vote-btn" disabled>투표</button>
         </div>
       </div>
 
       <div id="role-card" class="hidden"></div>
-      <div id="chat"></div>
 
-      <div id="proposal-panel" class="hidden">
-        <p class="panel-title">
-          <span id="proposal-by"></span>님이 투표를 제안했습니다. 진행할까요?
-          (남은 시간 <span id="proposal-timer">20</span>초 · 찬성 <span id="proposal-agree">0</span> /
-          반대 <span id="proposal-disagree">0</span> · <span id="proposal-total">0</span>명 중)
-        </p>
-        <div id="proposal-buttons">
-          <button id="proposal-yes" class="ox yes">O 진행</button>
-          <button id="proposal-no" class="ox no">X 더 듣기</button>
-        </div>
-        <p id="proposal-mine" class="panel-note hidden"></p>
-        <p class="panel-note">찬성이 절반 이상이면 투표로 넘어갑니다.</p>
-      </div>
-
-      <div id="vote-panel" class="hidden">
-        <p class="panel-title">
-          <span data-label="liar">Oliveyoung</span>이라고 생각하는 사람에게 투표하세요.
-          (남은 시간 <span id="vote-timer">30</span>초 · <span id="vote-count">0/0</span>명 투표함)
-        </p>
-        <div id="vote-buttons"></div>
-      </div>
-
-      <div id="guess-panel" class="hidden">
-        <p class="panel-title">
-          <span data-label="liar">Oliveyoung</span>으로 지목되었습니다. 제시어를 맞히면 역전승합니다.
-          (남은 시간 <span id="guess-timer">30</span>초)
-        </p>
-        <input id="guess-input" placeholder="제시어 입력" maxlength="60" autocomplete="off" />
-        <button id="guess-btn">제출</button>
+      <div id="chat">
+        <div id="chat-messages"></div>
+        <!-- 찬반·투표·정답은 여기에, 대화 흐름 안에 들여쓰여 나온다 -->
+        <div id="live-block"></div>
       </div>
 
       <div id="result-panel" class="hidden"></div>
 
+      <!-- [2번] 위로 스크롤해 있으면 진행 중이라고 알리는 얇은 띠 -->
+      <button id="jump-bar" class="hidden">
+        <span class="arrow">▼</span> <span id="jump-text">투표가 진행 중입니다</span>
+      </button>
+
       <div id="composer">
-        <input id="chat-input" placeholder="내 턴에 설명 입력..." maxlength="300" autocomplete="off" />
-        <button id="send-btn">설명 전송</button>
+        <input id="chat-input" placeholder="댓글 남기기..." maxlength="300" autocomplete="off" />
+        <button id="send-btn" title="전송" aria-label="전송">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 18.5 19 10 1.5 1.5 1.5 8.2l12.4 1.8-12.4 1.8z"/></svg>
+        </button>
       </div>
     </div>
   </div>

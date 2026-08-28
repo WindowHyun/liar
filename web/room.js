@@ -104,7 +104,7 @@ function createRoom(options) {
     round = null;
     result = null;
     phase = 'lobby';
-    chat.push({ kind: 'system', text: '참가자가 모두 나가 라운드가 취소되었습니다.', at: now() });
+    chat.push({ kind: 'system', code: 'abandoned', text: '참가자가 모두 나가 라운드가 취소되었습니다.', at: now() });
     trimChat();
     return true;
   }
@@ -209,7 +209,7 @@ function createRoom(options) {
       guessEndsAt: null,
     };
     phase = 'playing';
-    chat.push({ kind: 'system', text: '게임이 시작되었습니다.', at: now() });
+    chat.push({ kind: 'system', code: 'roundStart', text: '게임이 시작되었습니다.', at: now() });
     trimChat();
     changed();
     return null;
@@ -251,7 +251,7 @@ function createRoom(options) {
       endsAt: now() + PROPOSAL_MS,
     };
     phase = 'proposal';
-    chat.push({ kind: 'system', text: `${nameOf(playerId)}님이 투표를 제안했습니다. 진행할까요?`, at: now() });
+    chat.push({ kind: 'system', code: 'proposalCalled', who: nameOf(playerId), text: `${nameOf(playerId)}님이 투표를 제안했습니다. 진행할까요?`, at: now() });
     trimChat();
 
     clearPhaseTimer();
@@ -309,7 +309,7 @@ function createRoom(options) {
     const { agree, disagree } = proposalCounts();
     round.proposal = null;
     phase = 'playing';
-    chat.push({ kind: 'system', text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 설명을 이어가세요.`, at: now() });
+    chat.push({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 설명을 이어가세요.`, at: now() });
     trimChat();
     changed();
   }
@@ -321,7 +321,7 @@ function createRoom(options) {
     round.votes.clear();
     round.votingEndsAt = now() + VOTE_MS;
     phase = 'voting';
-    chat.push({ kind: 'system', text: `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`, at: now() });
+    chat.push({ kind: 'system', code: 'votingStarted', agree, disagree, text: `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`, at: now() });
     trimChat();
     phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
     changed();
@@ -371,7 +371,7 @@ function createRoom(options) {
     }
 
     round.accusedId = top[0];
-    chat.push({ kind: 'system', text: `${nameOf(round.accusedId)}님이 지목되었습니다.`, at: now() });
+    chat.push({ kind: 'system', code: 'accused', who: nameOf(round.accusedId), text: `${nameOf(round.accusedId)}님이 지목되었습니다.`, at: now() });
     trimChat();
 
     // LAN 버전에서는 지목된 본인이 REVEAL을 보내 줘야 정체를 알 수 있었고, 그 패킷이
