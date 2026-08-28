@@ -14,7 +14,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createRoom } = require('./room');
 const { validateClientMessage } = require('./protocol');
-const { log, warn } = require('../logger');
+const { log, warn, error } = require('../logger');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -22,6 +22,14 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // 무한 루프가 돌 수 있다. 넉넉하게 잡되 폭주는 끊는다.
 const RATE_WINDOW_MS = 5000;
 const RATE_MAX = 60;
+
+// [E-3] 연결 유지 확인. 두 가지를 한꺼번에 해결한다.
+//   1) 사내망 방화벽/프록시는 조용한 TCP 연결을 1분 안팎에 끊어 버린다. 이 게임은
+//      남의 설명을 듣는 60초 동안 아무 데이터도 오가지 않아서 딱 그 시간에 끊겼다.
+//   2) 반쯤 죽은 연결(전원이 나갔거나 케이블이 빠진)은 close 이벤트가 몇 분씩 안 온다.
+//      그동안 그 사람 자리를 계속 기다리게 된다.
+const PING_MS = 25000;
+const PONG_GRACE = 2; // 이 횟수만큼 응답이 없으면 죽은 연결로 본다
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -33,11 +41,13 @@ function createGameServer(options) {
   const opts = options || {};
   const port = opts.port;
   const bindHost = opts.host || '0.0.0.0';
+  const pingMs = opts.pingMs || PING_MS; // 테스트에서 짧게 잡으려고 주입받는다
 
   const clients = new Set(); // { ws, playerId }
   let server = null;
   let wss = null;
   let room = null;
+  let pingTimer = null;
 
   function sendTo(ws, payload) {
     if (ws.readyState !== ws.OPEN) return;
@@ -78,12 +88,33 @@ function createGameServer(options) {
     });
   }
 
+  /**
+   * [E-3] 25초마다 살아 있는지 묻는다. 조용한 연결이 방화벽에 끊기는 것을 막고,
+   * 이미 죽은 연결은 여기서 걸러 낸다(close를 기다리면 몇 분씩 걸린다).
+   */
+  function startHeartbeat() {
+    pingTimer = setInterval(() => {
+      for (const client of clients) {
+        if (client.missedPongs >= PONG_GRACE) {
+          warn(`[연결 끊김] ${client.playerId || '미참가'} 응답이 없어 정리합니다`);
+          try { client.ws.terminate(); } catch { /* 이미 닫힘 */ }
+          continue;
+        }
+        client.missedPongs += 1;
+        try { client.ws.ping(); } catch { /* 이미 닫힘 */ }
+      }
+    }, pingMs);
+    // 이 타이머 때문에 프로세스가 안 죽는 일이 없게 한다.
+    if (typeof pingTimer.unref === 'function') pingTimer.unref();
+  }
+
   function handleConnection(ws) {
-    const client = { ws, playerId: null, windowStart: 0, count: 0 };
+    const client = { ws, playerId: null, windowStart: 0, count: 0, missedPongs: 0 };
     clients.add(client);
 
     // 듣는 사람이 없으면 소켓 오류 하나로 프로세스 전체가 죽는다.
     ws.on('error', (err) => { warn(`[연결 오류] ${err.message}`); });
+    ws.on('pong', () => { client.missedPongs = 0; });
     ws.on('close', () => {
       clients.delete(client);
       // stop() 중이면 room은 이미 없다. 호스트가 물러나면서 서버를 내릴 때 이 경로가
@@ -92,6 +123,20 @@ function createGameServer(options) {
     });
 
     ws.on('message', (raw) => {
+      // [E-3] 여기서 예외가 나면 ws가 그대로 위로 던져 프로세스가 죽는다. 그러면 요청을
+      // 보낸 한 사람이 아니라 접속자 전원이 동시에 튕긴다. 한 번의 잘못된 요청이
+      // 판 전체를 날리지 않도록 여기서 잡는다.
+      try {
+        handleMessage(client, ws, raw);
+      } catch (err) {
+        error(`[요청 처리 실패] ${client.playerId || '미참가'} ${err && err.stack ? err.stack : err}`);
+        sendTo(ws, { type: 'error', message: '요청을 처리하지 못했습니다. 다시 시도해 주세요.' });
+      }
+    });
+  }
+
+  function handleMessage(client, ws, raw) {
+    {
       // [S-2] 창 하나가 서버를 독차지하지 못하게 한다.
       const now = Date.now();
       if (now - client.windowStart > RATE_WINDOW_MS) {
@@ -116,6 +161,10 @@ function createGameServer(options) {
         sendTo(ws, { type: 'error', message: '잘못된 요청입니다.' });
         return;
       }
+
+      // [E-3] 화면 쪽 확인. 브라우저는 WebSocket ping 프레임을 자바스크립트로 볼 수
+      // 없어서, 화면이 스스로 살아 있는지 확인하려면 이렇게 주고받아야 한다.
+      if (msg.type === 'ping') { sendTo(ws, { type: 'pong' }); return; }
 
       if (msg.type === 'join') {
         const joined = room.join({ nickname: msg.nickname, token: msg.token });
@@ -152,7 +201,7 @@ function createGameServer(options) {
 
       // 거절 사유는 요청한 사람에게만 알린다. 눌러도 아무 일이 없으면 원인을 알 수 없다.
       if (reason) sendTo(ws, { type: 'error', message: reason });
-    });
+    }
   }
 
   /**
@@ -175,7 +224,15 @@ function createGameServer(options) {
     return new Promise((resolve, reject) => {
       if (server) { resolve(); return; }
 
-      room = createRoom({ onChange: broadcastState });
+      // 규칙 타이머(설명 시간 초과, 투표 마감 등)에서 예외가 나도 프로세스가 죽지
+      // 않게 감싼다. 죽으면 접속자 전원이 동시에 튕긴다.
+      const guardedTimer = (fn, ms) => setTimeout(() => {
+        try { fn(); } catch (err) {
+          error(`[진행 처리 실패] ${err && err.stack ? err.stack : err}`);
+        }
+      }, ms);
+      room = createRoom({ onChange: broadcastState, setTimer: guardedTimer });
+      startHeartbeat();
       server = http.createServer(handleHttp);
       // [S-1] 이 서버는 자기가 내려준 화면(같은 출처)이나 Electron 창(로컬 출처)만
       // 상대한다. 참가자가 열어 둔 아무 웹페이지가 붙어 오는 것(CSWSH)을 막는다.
@@ -204,6 +261,7 @@ function createGameServer(options) {
   }
 
   function cleanup() {
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     for (const client of clients) {
       try { client.ws.terminate(); } catch { /* 이미 끊김 */ }
     }

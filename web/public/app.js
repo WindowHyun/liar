@@ -34,6 +34,11 @@ var tickTimer = null;
 var everConnected = false; // [E-1] 첫 접속과 호스트 인계를 구분하기 위해
 var serverOffset = 0;      // 서버 시계 - 내 시계. 남은 시간을 정확히 세기 위해.
 var lastChatCount = -1;
+// [E-3] 연결 감시. 사내망에서 조용한 연결이 끊기거나, 끊긴 줄도 모르고 있는 것을 막는다.
+var PING_MS = 20000;       // 살아 있는지 물어보는 주기
+var SILENCE_MS = 50000;    // 이만큼 아무 소식이 없으면 죽은 연결로 보고 다시 붙는다
+var pingTimer = null;
+var lastSeenAt = 0;
 var liveSignature = '';    // 진행 블록을 필요할 때만 다시 그리기 위한 지문
 
 function $(id) { return document.getElementById(id); }
@@ -110,12 +115,15 @@ function connect() {
     reconnectDelay = 500;
     hideBanner();
     $('conn-hint').textContent = '';
+    startWatchdog();
     if (joined && myNickname) sendMessage({ type: 'join', nickname: myNickname, token: readToken() });
   };
 
   ws.onmessage = function (ev) {
+    lastSeenAt = Date.now(); // 무엇이 오든 연결이 살아 있다는 뜻이다
     var msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.type === 'pong') return;
     if (msg.type === 'welcome') {
       myId = msg.playerId;
       writeStored(TOKEN_KEY, msg.token);
@@ -130,11 +138,41 @@ function connect() {
   };
 
   ws.onclose = function () {
+    stopWatchdog();
     $('conn-hint').textContent = '서버와 연결이 끊어졌습니다.';
     showBanner('warn', '서버와의 연결이 끊어졌습니다. 다시 연결하는 중입니다...');
     scheduleReconnect();
   };
   ws.onerror = function () { /* 곧바로 onclose가 이어진다 */ };
+}
+
+/**
+ * [E-3] 연결이 살아 있는지 스스로 확인한다.
+ *
+ * 브라우저는 WebSocket의 ping 프레임을 자바스크립트로 볼 수 없어서, 서버가 아무리
+ * 확인해도 화면은 자기 연결이 죽었는지 알 방법이 없다. 사내망에서는 조용한 연결이
+ * 소리 없이 끊기고 close 이벤트도 한참 뒤에야 오거나 아예 안 온다. 그동안 화면은
+ * 멀쩡해 보이는데 아무것도 안 되는 상태가 된다.
+ * 그래서 주기적으로 물어보고, 답이 없으면 먼저 끊고 다시 붙는다.
+ */
+function startWatchdog() {
+  stopWatchdog();
+  lastSeenAt = Date.now();
+  pingTimer = setInterval(function () {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastSeenAt > SILENCE_MS) {
+      $('conn-hint').textContent = '연결이 끊어진 것 같아 다시 붙는 중...';
+      try { ws.close(); } catch (e) { /* 이미 닫힘 */ } // onclose가 재연결을 맡는다
+      return;
+    }
+    try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) { /* 곧 onclose가 온다 */ }
+  }, PING_MS);
+}
+
+function stopWatchdog() {
+  if (!pingTimer) return;
+  clearInterval(pingTimer);
+  pingTimer = null;
 }
 
 function scheduleReconnect() {

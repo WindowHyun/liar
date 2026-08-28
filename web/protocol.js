@@ -19,6 +19,7 @@ const CLIENT_MESSAGES = {
   join: (m) => (str(m.nickname, LIMITS.nickname) && optStr(m.token, LIMITS.token) ? null : 'nickname/token'),
   start: () => null,
   leave: () => null,
+  ping: () => null,   // [E-3] 화면이 연결이 살아 있는지 확인하는 용도
   chat: (m) => (str(m.text, LIMITS.text) ? null : 'text'),
   callVote: () => null,
   proposalVote: (m) => (typeof m.agree === 'boolean' ? null : 'agree'),
