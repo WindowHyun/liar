@@ -47,14 +47,29 @@ async function speakerPage(pages) {
   return null;
 }
 
-/** 전원이 대화권을 한 번씩 써서 설명 단계를 끝낸다. */
+/** 한 사람이 자기 차례를 쓴다. */
+async function speakOnce(pages) {
+  const sp = await speakerPage(pages);
+  if (!sp) return false;
+  await sp.page.fill('#chat-input', `${sp.name}의 설명입니다`);
+  await sp.page.press('#chat-input', 'Enter');
+  await wait(300);
+  return true;
+}
+
+/** 지금 바퀴에서 아직 말하지 않은 사람들만 말하게 한다(한 바퀴). */
+async function finishOneRound(pages) {
+  for (let i = 0; i < pages.length + 1; i += 1) {
+    if (!(await speakOnce(pages))) return;
+    const badge = await pages[0].page.textContent('#live-block .round-badge').catch(() => null);
+    if (badge && badge.trim() !== '1차') return; // 다음 바퀴로 넘어갔다
+  }
+}
+
+/** 정해진 바퀴를 모두 돌아 설명 단계를 끝낸다. */
 async function finishExplanations(pages) {
-  for (let guard = 0; guard < pages.length + 3; guard += 1) {
-    const sp = await speakerPage(pages);
-    if (!sp) return;
-    await sp.page.fill('#chat-input', `${sp.name}의 설명입니다`);
-    await sp.page.press('#chat-input', 'Enter');
-    await wait(300);
+  for (let guard = 0; guard < pages.length * 3 + 3; guard += 1) {
+    if (!(await speakOnce(pages))) return;
   }
 }
 
@@ -95,7 +110,7 @@ async function main() {
   }
 
   const [p1, p2, p3] = pages;
-  await p1.page.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 3, { timeout: 6000 });
+  await p1.page.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 3, null, { timeout: 6000 });
   check('X1 세 명이 서로를 본다', (await p1.page.textContent('#participant-list')).includes('민수'));
 
   // 라운드 시작
@@ -134,24 +149,38 @@ async function main() {
 
   await first.page.fill('#chat-input', '빨갛습니다');
   await first.page.press('#chat-input', 'Enter');
-  await others[0].page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), { timeout: 5000 });
+  await others[0].page.waitForFunction(() => document.querySelector('#chat').textContent.includes('빨갛습니다'), null, { timeout: 5000 });
   check('X3 대화가 모두에게 보인다', (await others[1].page.textContent('#chat')).includes('빨갛습니다'));
 
-  await first.page.waitForFunction(() => !document.querySelector('#composer.my-turn'), { timeout: 5000 });
+  await first.page.waitForFunction(() => !document.querySelector('#composer.my-turn'), null, { timeout: 5000 });
   check('X3 [요청] 대화권은 1인 1회 - 말하고 나면 바로 잠긴다',
     await first.page.isDisabled('#chat-input'));
   check('X3 설명을 마친 사람은 목록에 완료로 표시된다',
     (await first.page.textContent('#live-block .track')).includes('✅'));
+  check('X3 [규칙] 지금이 몇 차 설명인지 보인다',
+    (await p1.page.textContent('#live-block .round-badge')).trim() === '1차',
+    await p1.page.textContent('#live-block .round-badge'));
 
-  // 남은 사람이 설명을 마치면 자유 채팅이 열린다
+  // 한 바퀴를 다 돌면 자유 대화가 아니라 2차 설명으로 넘어간다
+  await finishOneRound(pages);
+  await p1.page.waitForFunction(
+    () => (document.querySelector('#live-block .round-badge') || {}).textContent === '2차',
+    { timeout: 5000 });
+  check('X3 [규칙] 1차를 다 돌면 2차 설명으로 넘어간다 (자유 대화가 아니다)',
+    (await p1.page.textContent('#chat-messages')).includes('2차 설명을 시작합니다'));
+  check('X3 [규칙] 2차에서는 전원이 다시 대기 상태가 된다',
+    !(await p1.page.textContent('#live-block .track')).includes('✅'),
+    (await p1.page.textContent('#live-block .track')).replace(/\s+/g, ' ').trim());
+
+  // 2차까지 마치면 자유 채팅이 열린다
   await finishExplanations(pages);
   await Promise.all(pages.map((p) => p.page.waitForFunction(
-    () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), { timeout: 5000 })));
-  check('X3 전원이 설명을 마치면 자유 채팅으로 넘어간다',
-    (await p1.page.textContent('#chat-messages')).includes('설명이 모두 끝났습니다'));
+    () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), null, { timeout: 5000 })));
+  check('X3 [규칙] 2차까지 마쳐야 자유 채팅으로 넘어간다',
+    (await p1.page.textContent('#chat-messages')).includes('2차 설명까지 끝났습니다'));
   // 대화에 남는 기록과 진행 블록이 같은 문장을 두 번 찍지 않는다
   check('X3 자유 채팅 안내가 두 번 찍히지 않는다',
-    (await p1.page.textContent('#chat')).split('설명이 모두 끝났습니다').length === 2);
+    (await p1.page.textContent('#chat')).split('자유롭게 이야기하세요').length === 2);
   check('X3 자유 채팅에서는 전원의 입력창이 열린다',
     !(await p1.page.isDisabled('#chat-input')) && !(await p3.page.isDisabled('#chat-input')));
   check('X3 자유 채팅부터 투표를 제안할 수 있다', !(await p1.page.isDisabled('#vote-btn')));
@@ -164,7 +193,7 @@ async function main() {
   await p1.page.waitForFunction(() => {
     const box = document.getElementById('chat');
     return box.scrollHeight > box.clientHeight + 60;
-  }, { timeout: 5000 });
+  }, null, { timeout: 5000 });
 
   // 투표 제안 - 먼저 다 같이 O/X로 진행 여부를 정한다.
   // 찬반·투표는 대화 흐름 안(#live-block)에 들여쓰여 나온다.
@@ -271,7 +300,7 @@ async function main() {
 
   await citizens[0].page.click('#leave-btn');
   await liar2.page.waitForFunction(
-    () => document.querySelectorAll('#participant-list li').length === 2, { timeout: 5000 });
+    () => document.querySelectorAll('#participant-list li').length === 2, null, { timeout: 5000 });
   check('X10 [요청] 나가기를 누르면 남은 사람 목록에서 즉시 사라진다',
     !(await liar2.page.textContent('#participant-list')).includes(citizens[0].name),
     (await liar2.page.textContent('#participant-list')).replace(/\s+/g, ' ').trim());
@@ -283,7 +312,7 @@ async function main() {
 
   await citizens[1].page.click('#leave-btn');
   await liar2.page.waitForFunction(
-    () => !document.getElementById('start-btn').classList.contains('hidden'), { timeout: 5000 });
+    () => !document.getElementById('start-btn').classList.contains('hidden'), null, { timeout: 5000 });
   check('X10 [이슈] 혼자 남으면 라운드가 그 자리에서 취소되고 로비로 돌아온다',
     (await liar2.page.textContent('#chat-messages')).includes('라운드가 취소되었습니다'));
   check('X10 [이슈] 혼자 남아도 게임 시작 버튼이 다시 보인다',
@@ -293,7 +322,7 @@ async function main() {
   await citizens[0].page.fill('#nickname-input', citizens[0].name);
   await citizens[0].page.click('#join-btn');
   await liar2.page.waitForFunction(
-    () => !document.getElementById('start-btn').disabled, { timeout: 5000 });
+    () => !document.getElementById('start-btn').disabled, null, { timeout: 5000 });
   check('X10 [이슈] 다시 2명이 되면 곧바로 시작할 수 있다',
     !(await liar2.page.isDisabled('#start-btn')));
 
@@ -306,15 +335,17 @@ async function main() {
   const stays = here.find((p) => p !== liar3);
 
   await liar3.page.click('#leave-btn');
-  await stays.page.waitForFunction(
-    () => !document.getElementById('start-btn').classList.contains('hidden'), { timeout: 5000 });
-  check('X11 [이슈] 라이어가 나가면 라운드가 취소된다',
-    (await stays.page.textContent('#chat-messages')).includes('나가서 이번 라운드는 취소되었습니다'),
-    (await stays.page.textContent('#chat-messages')).split('오전').pop().trim().slice(0, 60));
-  check('X11 [이슈] 취소된 판은 전적에 쌓이지 않는다',
-    (await stays.page.textContent('#tally-label')).includes('1판 ·'),
+  await stays.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 5000 });
+  check('X11 [요청] 라이어가 도망가면 시민 승으로 끝난다',
+    (await stays.page.textContent('#result-panel')).includes('시민 팀 승리'),
+    (await stays.page.textContent('#result-panel')).replace(/\s+/g, ' ').trim().slice(0, 70));
+  check('X11 [요청] 누가 라이어였는지 밝힌다',
+    (await stays.page.textContent('#result-panel')).includes(liar3.name)
+    && (await stays.page.textContent('#result-panel')).includes('도중에 나갔습니다'));
+  check('X11 시민 승으로 전적에 쌓인다',
+    (await stays.page.textContent('#tally-label')).includes('시민 2'),
     (await stays.page.textContent('#tally-label')).trim() || '(비어 있음)');
-  check('X11 취소 뒤에도 대화가 잠기지 않는다', !(await stays.page.isDisabled('#chat-input')));
+  check('X11 끝난 뒤에는 대화가 잠기지 않는다', !(await stays.page.isDisabled('#chat-input')));
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }

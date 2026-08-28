@@ -33,6 +33,7 @@ const MAX_TRIES = 10;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png',
   '.js': 'text/javascript; charset=utf-8',
 };
 

@@ -344,18 +344,14 @@ function systemLine(m) {
     tail.textContent = '  ' + LABELS.liar + josa(LABELS.liar, '은 ', '는 ') + m.liarName
       + '님, 제시어는 "' + m.word + '"' + josa(m.word, '이었습니다.', '였습니다.');
     p.appendChild(tail);
-  } else if (m.code === 'liarLeft' && m.who) {
-    // 누가 라이어였는지는 판이 무효가 된 뒤라 밝혀도 된다. 왜 갑자기 끝났는지가 더 중요하다.
-    p.appendChild(who(m.who));
-    p.appendChild(document.createTextNode('님이 '));
-    p.appendChild(liar());
-    p.appendChild(document.createTextNode(
-      josa(LABELS.liar, '이었습니다', '였습니다') + '. 나가서 이번 라운드는 취소되었습니다.'));
+  } else if (m.code === 'speakRoundStart') {
+    p.textContent = m.speakRound + '차 설명을 시작합니다.';
   } else if (m.code === 'turnSkipped' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 설명 시간을 넘겼습니다.'));
   } else if (m.code === 'freeStart') {
-    p.textContent = '설명이 모두 끝났습니다. 이제 자유롭게 이야기하세요. (1분)';
+    p.textContent = (m.speakRounds > 1 ? m.speakRounds + '차 설명까지 끝났습니다.' : '설명이 모두 끝났습니다.')
+      + ' 이제 자유롭게 이야기하세요. (1분)';
   } else if (m.code === 'votingStarted') {
     // 찬반을 거쳐 온 경우와, 자유 대화 시간이 다 돼서 그냥 넘어온 경우를 구분한다.
     p.textContent = m.byProposal === false
@@ -436,7 +432,8 @@ function liveSignatureOf(s) {
   // 사람이 빠져도 다시 그려야 하므로 남은 인원을 지문에 넣는다.
   var here = s.round ? s.round.roster.filter(function (r) { return !r.left; }).length : 0;
   if (s.phase === 'turn' && s.round && s.round.speaker) {
-    return 't|' + s.round.speaker.id + '|' + s.round.spokenCount + '|' + s.round.speakTotal + '|' + here;
+    return 't|' + s.round.speakRound + '|' + s.round.speaker.id + '|'
+      + s.round.spokenCount + '|' + s.round.speakTotal + '|' + here;
   }
   if (s.phase === 'free' && s.round) return 'f|' + s.round.spokenCount + '|' + here;
   if (!s.you || !s.you.inRound) return '';
@@ -466,6 +463,12 @@ function buildTurn(s) {
   mic.className = 'turn-mic';
   mic.textContent = '🎙️';
   text.appendChild(mic);
+  if (s.round.speakRounds > 1) {
+    var badge = document.createElement('span');
+    badge.className = 'round-badge';
+    badge.textContent = s.round.speakRound + '차';
+    text.appendChild(badge);
+  }
   if (mine) {
     var me = document.createElement('span');
     me.className = 'who-hl';
@@ -514,9 +517,12 @@ function speakerTrack(s) {
 }
 
 function metaTurn(s) {
+  var rounds = s.round.speakRounds > 1
+    ? ' · 설명은 ' + s.round.speakRounds + '차까지 돕니다'
+    : '';
   return '남은 시간 ' + secondsLeft(s.round.speakEndsAt) + '초 · '
     + s.round.speakTotal + '명 중 ' + s.round.spokenCount + '명 설명함'
-    + ' · 대화권은 1인 1회입니다';
+    + ' · 한 바퀴에 1인 1회' + rounds;
 }
 
 /** 전원이 설명을 마친 뒤의 자유 대화 1분. 여기서만 투표를 제안할 수 있다. */
@@ -768,6 +774,9 @@ function renderResult(s) {
     noVotes: '제한 시간 안에 아무도 투표하지 않았습니다.',
     wrongAccusation: (r.accused ? r.accused.nickname + '님은 ' : '지목된 사람은 ') + LABELS.liar + '이 아니었습니다.',
     guessTimeout: LABELS.liar + '이 제한 시간 안에 제시어를 맞히지 못했습니다.',
+    // 불리해졌다고 창을 닫아 버리면 진 것으로 본다.
+    liarLeft: r.liar.nickname + '님이 ' + LABELS.liar + josa(LABELS.liar, '이었는데 ', '였는데 ')
+      + '도중에 나갔습니다.',
     hostLeft: '게임을 진행하던 사람의 접속이 끊겨 라운드가 취소되었습니다.',
     guess: r.winner === 'liar'
       ? LABELS.liar + '이 제시어를 맞혔습니다!'

@@ -96,6 +96,8 @@ input:disabled { opacity:.5; }
 
 /* ── 설명 단계 ── */
 .turn-mic { margin-right:6px; }
+/* 몇 바퀴째 설명인지 (1차 / 2차) */
+.round-badge { display:inline-block; margin-right:6px; padding:1px 7px; border-radius:9px; background:#3F0E40; color:#fff; font-size:11px; font-weight:700; vertical-align:1px; }
 /* 내 차례일 때는 블록 자체가 눈에 띄어야 한다. 놓치면 그냥 넘어가 버린다. */
 .msg.my-turn { background:#FFF8E6; border-left:3px solid #ECB22E; border-radius:0 6px 6px 0; margin-left:-13px; padding:9px 10px 9px 10px; }
 .msg.my-turn .avatar { background:#ECB22E; color:#3F2E00; }

@@ -44,6 +44,8 @@ function createWindow() {
   }
 
   mainWindow = new BrowserWindow({
+    // 기본 Electron 로고 대신 이 앱의 아이콘. (tools/make-icon.js로 만든다)
+    icon: path.join(__dirname, 'icon.png'),
     width: 1100,
     height: 720,
     minWidth: 820,

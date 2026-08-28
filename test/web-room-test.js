@@ -56,7 +56,7 @@ const idsOf = (players) => players.map((p) => p.playerId);
  * 순서는 매 판 섞이므로 방에 물어보며 진행한다.
  */
 function passTurns(room) {
-  for (let guard = 0; guard < 50; guard += 1) {
+  for (let guard = 0; guard < 200; guard += 1) {
     const dbg = room._debug();
     if (dbg.phase !== 'turn' || !dbg.round) break;
     const speaker = dbg.round.speakOrder[dbg.round.speakIndex];
@@ -395,7 +395,7 @@ function w19_oneTurnPerPerson() {
   check('W19 차례인 사람은 말할 수 있다', room.say(first, '동그랗습니다') === null);
 
   const again = room.say(first, '하나 더 덧붙이면');
-  check('W19 [요청] 대화권은 무조건 1인 1회 - 말한 사람은 다시 말할 수 없다',
+  check('W19 [요청] 대화권은 무조건 1인 1회 - 한 바퀴에 두 번 말할 수 없다',
     typeof again === 'string', again || '통과해버림');
   check('W19 말하고 나면 대화권이 다음 사람에게 넘어간다',
     room.stateFor(first).round.speaker.id === second,
@@ -445,7 +445,7 @@ function w22_turnTimeoutMovesOn() {
     room.stateFor(order[1]).round.speaker.id === order[1],
     room.stateFor(order[1]).round.speaker.nickname);
   check('W22 넘긴 사람은 설명한 것으로 치지 않는다',
-    room._debug().round.spoken.size === 0);
+    room._debug().round.spoken.size === 0 && room._debug().round.speakRound === 1);
   check('W22 넘겼다는 사실이 대화에 남는다',
     room.stateFor(order[1]).chat.some((m) => m.code === 'turnSkipped'));
 }
@@ -460,9 +460,8 @@ function w23_disconnectedSpeakerSkipped() {
     room.stateFor(order[1]).round.speaker.id === order[1],
     room.stateFor(order[1]).round.speaker.nickname);
 
-  room.say(order[1], '길쭉합니다');
-  room.say(order[2], '차갑습니다');
-  check('W23 남은 사람이 다 말하면 자유 채팅으로 넘어간다',
+  passTurns(room);
+  check('W23 남은 사람이 정해진 바퀴를 다 돌면 자유 채팅으로 넘어간다',
     room._debug().phase === 'free', room._debug().phase);
 }
 
@@ -655,11 +654,14 @@ function w34_liarLeavingCancelsRound() {
 
   room.leave(b);
   const s = room.stateFor(a);
-  check('W34 [이슈] 라이어가 나가면 그 자리에서 라운드가 취소된다', s.phase === 'lobby', s.phase);
-  check('W34 [이슈] 도망간 라이어에게 승리를 주지 않는다',
-    s.record.rounds === 0 && s.record.liarWins === 0, JSON.stringify(s.record));
-  check('W34 [이슈] 왜 끝났는지 대화에 남는다',
-    s.chat.some((m) => m.code === 'liarLeft' && m.who === 'B'));
+  check('W34 [이슈] 라이어가 나가면 그 자리에서 라운드가 끝난다', s.phase === 'result', s.phase);
+  check('W34 [요청] 도망친 라이어는 진 것으로 본다 (시민 승)',
+    s.result.winner === 'citizens' && s.result.reason === 'liarLeft',
+    s.result.winner + '/' + s.result.reason);
+  check('W34 [요청] 누가 라이어였는지 밝힌다',
+    s.result.liar.nickname === 'B' && s.chat.some((m) => m.code === 'result' && m.liarName === 'B'));
+  check('W34 시민 승으로 전적에 쌓인다',
+    s.record.citizenWins === 1 && s.record.liarWins === 0, JSON.stringify(s.record));
   check('W34 곧바로 다음 판을 시작할 수 있다', room.start() === null);
 }
 
@@ -680,8 +682,10 @@ function w35_liarDisconnectGetsTheSameGrace() {
 
   room.disconnect(back.playerId);
   advance(11000);
-  check('W35 10초를 넘기면 그때 라운드를 접는다',
-    room._debug().phase === 'lobby', room._debug().phase);
+  check('W35 10초를 넘기면 그때 시민 승으로 끝낸다',
+    room._debug().phase === 'result'
+    && room.stateFor(players[0].playerId).result.reason === 'liarLeft',
+    room._debug().phase);
 }
 
 function w36_twoPlayerRoundIsNotCancelled() {
@@ -705,6 +709,57 @@ function w36_twoPlayerRoundIsNotCancelled() {
     !s.chat.some((m) => m.code === 'abandoned'));
 }
 
+function w37_twoSpeakRounds() {
+  // [규칙 변경] 1차 턴제 → 2차 턴제 → 자유 → 투표
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const ids = idsOf(players);
+  check('W37 시작하면 1차 설명부터다',
+    room.stateFor(ids[0]).round.speakRound === 1
+    && room.stateFor(ids[0]).round.speakRounds === 2);
+
+  const first = room._debug().round.speakOrder.slice();
+  first.forEach((id) => room.say(id, '1차 설명'));
+  check('W37 [규칙] 한 바퀴를 다 돌아도 자유 대화로 가지 않는다',
+    room._debug().phase === 'turn', room._debug().phase);
+  check('W37 [규칙] 2차 설명으로 넘어간다',
+    room.stateFor(ids[0]).round.speakRound === 2);
+  check('W37 2차가 시작됐다고 대화에 남는다',
+    room.stateFor(ids[0]).chat.some((m) => m.code === 'speakRoundStart' && m.speakRound === 2));
+  check('W37 2차에서는 전원이 다시 말할 수 있다',
+    room.stateFor(ids[0]).round.spokenCount === 0);
+
+  const second = room._debug().round.speakOrder.slice();
+  check('W37 2차 순서는 새로 섞는다 (같은 사람이 계속 마지막에 걸리지 않게)',
+    second.length === first.length && new Set(second).size === first.length,
+    `1차 ${first.join(',')} / 2차 ${second.join(',')}`);
+
+  const tooEarly = room.callVote(ids[0]);
+  check('W37 [규칙] 2차 설명 중에도 투표를 제안할 수 없다',
+    typeof tooEarly === 'string' && tooEarly.includes('설명'), tooEarly || '통과해버림');
+
+  second.forEach((id) => room.say(id, '2차 설명'));
+  check('W37 [규칙] 2차까지 끝나야 자유 대화가 열린다',
+    room._debug().phase === 'free', room._debug().phase);
+  check('W37 자유 대화 안내가 2차까지 끝났다고 말한다',
+    room.stateFor(ids[0]).chat.some((m) => m.code === 'freeStart' && m.text.includes('2차')));
+
+  check('W37 [규칙] 자유 대화부터 투표를 제안할 수 있다', room.callVote(ids[0]) === null);
+}
+
+function w38_secondRoundStillOnePerPerson() {
+  const { room } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  room._debug().round.speakOrder.slice().forEach((id) => room.say(id, '1차'));
+
+  const order2 = room._debug().round.speakOrder.slice();
+  check('W38 2차에서도 차례가 아니면 말할 수 없다',
+    typeof room.say(order2[1], '끼어들기') === 'string');
+  check('W38 2차에서도 차례면 말할 수 있다', room.say(order2[0], '2차 설명') === null);
+  check('W38 2차에서도 한 사람이 두 번 말할 수 없다',
+    typeof room.say(order2[0], '한 번 더') === 'string');
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
@@ -717,7 +772,8 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w28_disconnectGraceIsTenSeconds, w29_cannotVoteForSomeoneWhoLeft,
   w30_leavingSpeakerPassesTurn, w31_leaveThenRejoinIsANewSeat,
   w32_rejoinAfterGraceKeepsSeat, w33_leavingGivesUpTheSeat, w34_liarLeavingCancelsRound,
-  w35_liarDisconnectGetsTheSameGrace, w36_twoPlayerRoundIsNotCancelled]) {
+  w35_liarDisconnectGetsTheSameGrace, w36_twoPlayerRoundIsNotCancelled,
+  w37_twoSpeakRounds, w38_secondRoundStillOnePerPerson]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 
