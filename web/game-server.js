@@ -131,6 +131,16 @@ function createGameServer(options) {
         return;
       }
 
+      // 나가기는 "돌아오지 않는다"는 선언이라 자리를 남기지 않는다. 소켓이 끊겨서
+      // 사라지는 것(disconnect)과 달리 10초 유예도 주지 않는다.
+      if (msg.type === 'leave') {
+        const goneId = client.playerId;
+        client.playerId = null;
+        room.leave(goneId);
+        log(`[퇴장] ${goneId}`);
+        return;
+      }
+
       let reason = null;
       if (msg.type === 'start') reason = room.start();
       else if (msg.type === 'chat') reason = room.say(client.playerId, msg.text);

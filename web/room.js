@@ -33,8 +33,10 @@ const FREE_MS = 60000;          // 설명이 끝난 뒤 자유 채팅 1분
 const PROPOSAL_MS = 20000;      // 투표를 진행할지 묻는 찬반(O/X) 제한 시간
 const VOTE_MS = 30000;          // 투표 제한 시간
 const GUESS_MS = 30000;         // 라이어가 제시어를 맞힐 제한 시간
-const LOBBY_DROP_MS = 10000;    // 로비에서 끊긴 사람을 목록에서 지우기까지
-const ROUND_DROP_MS = 60000;    // 라운드 중에는 더 기다린다 - 잠깐 끊겼다 돌아올 수 있으므로
+// 끊긴 사람의 자리를 남겨 두는 시간. 잠깐 튕겼다 돌아오는 경우만 구제하면 되므로 짧게 둔다.
+// 예전에는 라운드 중에 60초를 기다렸는데, 그동안 남은 사람은 아무것도 할 수 없었다.
+// 스스로 나가기를 누른 사람은 이 시간을 기다리지 않고 그 자리에서 지운다(leave 참고).
+const DROP_MS = 10000;
 const CHAT_MAX = 100;           // 재접속한 사람에게도 보여줄 최근 대화 수
 const RECENT_WORDS_MAX = 8;
 
@@ -93,22 +95,28 @@ function createRoom(options) {
   }
 
   /**
-   * [W-1] 라운드 중에 접속자가 한 명도 남지 않으면 그 라운드를 접고 로비로 되돌린다.
+   * [W-1] 라운드를 이어갈 인원이 안 되면 그 판을 접고 로비로 되돌린다.
    *
-   * 예전에는 이걸 풀어 주는 것이 아무것도 없었다. 라운드 중에는 자리를 남겨 두는데
-   * (돌아올 수 있으니까) 아무도 돌아오지 않으면 phase가 'playing'인 채로 굳어서,
-   * 이후 들어오는 사람은 영원히 관전자가 되고 게임을 시작할 수도 없었다.
-   * 서버를 다시 켜야만 풀렸다.
+   * 예전에는 "한 명도 안 남았을 때"만 접었다. 그래서 2명이 하다가 한 명이 나가면 남은
+   * 사람은 설명 60초 → 자유 대화 60초 → 투표 30초를 혼자 다 흘려보내야 로비로 돌아왔다.
+   * 그동안 게임 시작 버튼은 잠겨 있어서, 다른 사람이 새로 들어와도 아무것도 할 수 없었다.
+   * 판이 성립하지 않는 순간(남은 참가자 < 최소 인원) 바로 접는다.
    */
-  function abandonRoundIfEmpty() {
+  function abandonRoundIfTooFew() {
     if (phase === 'lobby' || phase === 'result') return false;
-    if (connectedPlayers().length > 0) return false;
+    const remaining = activeRoster().length;
+    if (remaining >= MIN_PLAYERS) return false;
 
     clearPhaseTimer();
     round = null;
     result = null;
     phase = 'lobby';
-    chat.push({ kind: 'system', code: 'abandoned', text: '참가자가 모두 나가 라운드가 취소되었습니다.', at: now() });
+    chat.push({
+      kind: 'system', code: 'abandoned', remaining, at: now(),
+      text: remaining === 0
+        ? '참가자가 모두 나가 라운드가 취소되었습니다.'
+        : `남은 참가자가 ${MIN_PLAYERS}명보다 적어 라운드가 취소되었습니다.`,
+    });
     trimChat();
     return true;
   }
@@ -168,24 +176,45 @@ function createRoom(options) {
     player.connected = false;
 
     // [W-1] 목록에서 지우는 타이머는 언제나 건다. 예전에는 로비에서만 걸어서, 라운드 중에
-    // 끊긴 사람이 영영 유령으로 남았다. 라운드 중에는 더 오래 기다린다(돌아올 수 있으므로).
-    const dropAfter = (phase === 'lobby' || phase === 'result') ? LOBBY_DROP_MS : ROUND_DROP_MS;
+    // 끊긴 사람이 영영 유령으로 남았다. 어느 단계든 10초만 기다린다.
     setTimer(() => {
       const still = players.get(playerId);
       if (!still || still.connected) return;
       players.delete(playerId);
       // 이 사람이 마지막이었을 수도 있다.
-      if (!abandonRoundIfEmpty() && phase === 'voting') maybeTally();
+      if (!abandonRoundIfTooFew() && phase === 'voting') maybeTally();
       else changed();
-    }, dropAfter);
+    }, DROP_MS);
 
-    if (abandonRoundIfEmpty()) { changed(); return; }
+    if (abandonRoundIfTooFew()) { changed(); return; }
 
-    // 나간 사람을 계속 기다리면 투표가 끝나지 않는다.
+    // 끊긴 사람을 계속 기다리면 투표가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
     else if (phase === 'proposal') settleProposal(false);
     else if (phase === 'turn' && currentSpeakerId() === playerId) {
       // 말할 차례인 사람이 창을 닫았다. 돌아올 리 없는 60초를 다 기다릴 이유가 없다.
+      round.speakIndex += 1;
+      beginTurn();
+    } else changed();
+  }
+
+  /**
+   * 스스로 "나가기"를 누른 경우. 끊긴 것과 달리 10초를 기다리지 않고 그 자리에서 지운다.
+   * 돌아올 사람이 아니라고 본인이 말한 것이기 때문이다. 남은 사람이 다음 판을 바로
+   * 시작할 수 있어야 한다.
+   */
+  function leave(playerId) {
+    const player = players.get(playerId);
+    if (!player) return;
+    players.delete(playerId);
+
+    // 판이 성립하지 않게 됐으면 여기서 정리된다(round가 null이 되므로 아래는 건너뛴다).
+    if (abandonRoundIfTooFew()) { changed(); return; }
+
+    // 나간 사람을 계속 기다리면 그 단계가 끝나지 않는다.
+    if (phase === 'voting') maybeTally();
+    else if (phase === 'proposal') settleProposal(false);
+    else if (phase === 'turn' && currentSpeakerId() === playerId) {
       round.speakIndex += 1;
       beginTurn();
     } else changed();
@@ -434,6 +463,8 @@ function createRoom(options) {
     if (phase !== 'voting') return '지금은 투표할 수 없습니다.';
     if (!inRound(playerId)) return '이번 라운드 참가자가 아닙니다.';
     if (!inRound(targetId)) return '이번 라운드 참가자가 아닌 사람에게는 투표할 수 없습니다.';
+    // 이미 방을 나간 사람은 고를 수 없다. 화면에서도 빼지만 여기서 한 번 더 막는다.
+    if (!players.has(targetId)) return '이미 방을 나간 사람에게는 투표할 수 없습니다.';
     if (playerId === targetId) return '자기 자신에게는 투표할 수 없습니다.';
 
     round.votes.set(playerId, targetId);
@@ -571,7 +602,8 @@ function createRoom(options) {
       })),
       round: round ? {
         category: round.category,
-        roster: round.roster,
+        // left = 이미 방을 나간 사람. 화면이 투표 후보에서 빼는 데 쓴다.
+        roster: round.roster.map((r) => ({ id: r.id, nickname: r.nickname, left: !players.has(r.id) })),
         // 설명 단계 진행 상황. 화면이 "누구 차례 / 몇 명 남았는지"를 이걸로 그린다.
         speaker: phase === 'turn' && currentSpeakerId()
           ? { id: currentSpeakerId(), nickname: nameOf(currentSpeakerId()) } : null,
@@ -597,12 +629,12 @@ function createRoom(options) {
   }
 
   return {
-    join, disconnect, start, say, callVote, respondProposal, vote, guess, stateFor,
+    join, disconnect, leave, start, say, callVote, respondProposal, vote, guess, stateFor,
     playerIds: () => [...players.keys()],
     // 테스트에서 들여다보기 위한 것. 서버는 쓰지 않는다.
     _debug: () => ({ phase, round, result }),
-    MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS,
+    MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
   };
 }
 
-module.exports = { createRoom, MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS, LOBBY_DROP_MS };
+module.exports = { createRoom, MIN_PLAYERS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS };

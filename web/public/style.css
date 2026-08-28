@@ -26,7 +26,14 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #participant-list .tag.speaking { background:#ECB22E; color:#3F2E00; font-weight:700; }
 
 /* 전적은 버전 표기처럼 사이드바 맨 아래에 작고 흐리게 */
-#sidebar-foot { margin-top:auto; padding-top:16px; border-top:1px solid rgba(255,255,255,.1); }
+#sidebar-foot { margin-top:auto; padding-top:12px; border-top:1px solid rgba(255,255,255,.1); }
+/* 나가기는 실수로 누르면 곤란하니 눈에 띄지 않게, 그래도 찾을 수는 있게 둔다 */
+#leave-btn {
+  display:block; width:100%; margin-bottom:10px; padding:6px 0;
+  border:1px solid rgba(255,255,255,.16); border-radius:6px; background:transparent;
+  color:#C5AECA; font-size:12px; font-family:inherit; cursor:pointer;
+}
+#leave-btn:hover { background:rgba(255,255,255,.07); color:#fff; }
 #sidebar-foot p { margin:0; font-size:11px; color:#9B7CA1; line-height:1.6; }
 #tally-label { font-variant-numeric:tabular-nums; }
 #tally-label:empty { display:none; }
@@ -99,6 +106,7 @@ input:disabled { opacity:.5; }
 .pill .em { font-size:12px; line-height:1; }
 .pill.done { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
 .pill.now { background:#FFF3D6; border-color:#EBD08A; color:#6B4E00; font-weight:700; }
+.pill.gone { background:#F5F5F7; border-color:#E4E4E6; color:#B9B9BE; text-decoration:line-through; }
 
 /* 찬반 - 슬랙 리액션 칩 */
 .chips { display:flex; gap:7px; margin-top:9px; flex-wrap:wrap; }
@@ -170,7 +178,8 @@ input:disabled { opacity:.5; }
   #participant-list { display:flex; flex-wrap:wrap; gap:6px 14px; }
   #participant-list li { padding:2px 0; }
   #participant-list .tag { margin-left:6px; }
-  #sidebar-foot { margin-top:10px; padding-top:8px; }
+  #sidebar-foot { margin-top:10px; padding-top:8px; display:flex; align-items:center; gap:10px; }
+  #leave-btn { width:auto; margin:0; padding:4px 10px; flex-shrink:0; }
 
   #main { flex:1; min-height:0; }
   #topbar { padding:10px 14px; }

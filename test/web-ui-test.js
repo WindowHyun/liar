@@ -259,6 +259,40 @@ async function main() {
   check('X8 전송 버튼이 종이비행기 아이콘이다',
     (await p1.page.locator('#send-btn svg').count()) === 1);
 
+  // ── 방 나가기: 유예 없이 즉시, 그리고 남은 사람은 갇히지 않는다 ──
+  await p1.page.click('#start-btn');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
+  check('X10 다음 라운드가 시작됐다', (await p1.page.textContent('#live-block')).includes('설명'));
+
+  await p3.page.click('#leave-btn');
+  await p1.page.waitForFunction(
+    () => document.querySelectorAll('#participant-list li').length === 2, { timeout: 5000 });
+  check('X10 [요청] 나가기를 누르면 남은 사람 목록에서 즉시 사라진다',
+    !(await p1.page.textContent('#participant-list')).includes(p3.name),
+    (await p1.page.textContent('#participant-list')).replace(/\s+/g, ' ').trim());
+  check('X10 나간 사람은 접속 화면으로 돌아간다',
+    (await p3.page.isVisible('#screen-join')) && !(await p3.page.isVisible('#screen-game')));
+
+  // 2명이 남았으므로 라운드는 계속된다
+  check('X10 남은 2명은 라운드를 이어간다',
+    (await p1.page.locator('#live-block .track .pill').count()) === 3);
+
+  await p2.page.click('#leave-btn');
+  await p1.page.waitForFunction(
+    () => !document.getElementById('start-btn').classList.contains('hidden'), { timeout: 5000 });
+  check('X10 [이슈] 인원이 모자라지면 라운드가 그 자리에서 취소되고 로비로 돌아온다',
+    (await p1.page.textContent('#chat-messages')).includes('라운드가 취소되었습니다'));
+  check('X10 [이슈] 혼자 남아도 게임 시작 버튼이 다시 보인다',
+    await p1.page.isVisible('#start-btn'));
+
+  // 나갔던 사람이 다시 들어오면 바로 시작할 수 있어야 한다
+  await p3.page.fill('#nickname-input', p3.name);
+  await p3.page.click('#join-btn');
+  await p1.page.waitForFunction(
+    () => !document.getElementById('start-btn').disabled, { timeout: 5000 });
+  check('X10 [이슈] 다시 2명이 되면 곧바로 시작할 수 있다',
+    !(await p1.page.isDisabled('#start-btn')));
+
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }
 

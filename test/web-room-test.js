@@ -505,6 +505,104 @@ function w25_stateExposesTurnProgress() {
     !JSON.stringify(s2).includes('speakOrder'));
 }
 
+// ── 나가기 / 끊김 정리 ────────────────────────────────────────────────
+
+function w26_leaveIsImmediate() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const [a, , c] = idsOf(players);
+
+  room.leave(c);
+  const s = room.stateFor(a);
+  check('W26 [요청] 나가기를 누르면 유예 없이 그 자리에서 목록에서 사라진다',
+    s.players.every((p) => p.id !== c), s.players.map((p) => p.nickname).join(','));
+  check('W26 나간 사람은 상태에도 나간 것으로 표시된다',
+    s.round.roster.find((r) => r.id === c).left === true);
+}
+
+function w27_roundEndsWhenTooFewRemain() {
+  // [이슈] 예전에는 "한 명도 안 남았을 때"만 접어서, 2명이 하다가 한 명이 나가면
+  // 남은 사람이 2분 넘게 아무것도 못 하고 갇혔다.
+  const { room, players } = makeRoom(['A', 'B'], 0);
+  room.start();
+  const [a, b] = idsOf(players);
+  check('W27 라운드가 진행 중이다', room._debug().phase === 'turn');
+
+  room.leave(b);
+  const s = room.stateFor(a);
+  check('W27 [이슈] 남은 인원이 최소 인원보다 적어지면 그 자리에서 라운드가 취소된다',
+    s.phase === 'lobby', s.phase);
+  check('W27 [이슈] 취소 사유가 대화에 남는다',
+    s.chat.some((m) => m.code === 'abandoned'));
+
+  const late = room.join({ nickname: '지현' });
+  check('W27 [이슈] 새 사람이 들어오면 곧바로 다음 판을 시작할 수 있다',
+    room.stateFor(a).canStart === true && room.start() === null);
+  check('W27 새 사람이 관전자로 갇히지 않는다',
+    room.stateFor(late.playerId).you.inRound === true);
+}
+
+function w28_disconnectGraceIsTenSeconds() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const [a, , c] = idsOf(players);
+  const names = () => room.stateFor(a).players.map((p) => p.nickname);
+
+  room.disconnect(c); // 튕겼다 - 돌아올 수도 있다
+  check('W28 튕긴 직후에는 자리가 남아 있다', names().includes('C'), names().join(','));
+
+  advance(9000);
+  check('W28 [요청] 10초 안에는 돌아올 자리가 남아 있다', names().includes('C'), names().join(','));
+
+  advance(2000);
+  check('W28 [요청] 10초가 지나면 목록에서 즉시 지운다', !names().includes('C'), names().join(','));
+  check('W28 라운드 중에도 10초다 (예전에는 60초였다)', room.DROP_MS === 10000, String(room.DROP_MS));
+}
+
+function w29_cannotVoteForSomeoneWhoLeft() {
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const [a, b, c, d] = idsOf(players);
+  passProposal(room, [a, b, c, d]);
+  check('W29 투표 중이다', room._debug().phase === 'voting', room._debug().phase);
+
+  room.leave(d);
+  const reason = room.vote(a, d);
+  check('W29 이미 나간 사람에게는 투표할 수 없다',
+    typeof reason === 'string' && reason.includes('나간'), reason || '통과해버림');
+  check('W29 나간 사람을 빼고도 투표는 계속된다',
+    room._debug().phase === 'voting', room._debug().phase);
+
+  room.vote(a, b); room.vote(b, a); room.vote(c, a);
+  check('W29 남은 사람만으로 개표된다', room._debug().phase !== 'voting', room._debug().phase);
+}
+
+function w30_leavingSpeakerPassesTurn() {
+  const { room } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const order = room._debug().round.speakOrder.slice();
+
+  room.leave(order[0]); // 말할 차례인 사람이 나갔다
+  check('W30 차례인 사람이 나가면 대화권이 바로 다음 사람에게 넘어간다',
+    room.stateFor(order[1]).round.speaker.id === order[1],
+    room.stateFor(order[1]).round.speaker.nickname);
+  check('W30 나간 사람 자리를 기다리지 않는다', room._debug().phase === 'turn');
+}
+
+function w31_leaveThenRejoinIsANewSeat() {
+  const { room, players } = makeRoom(['A', 'B'], 0);
+  const token = players[0].token;
+  room.leave(players[0].playerId);
+
+  // 나가기는 자리를 버리는 것이다. 같은 토큰으로 들어와도 옛 자리로 되살아나면 안 된다.
+  const back = room.join({ nickname: 'A', token });
+  check('W31 나간 뒤 다시 들어오면 새 자리로 들어간다',
+    back.restored === false && back.playerId !== players[0].playerId,
+    `옛자리=${players[0].playerId} / 새자리=${back.playerId}`);
+  check('W31 유령이 남지 않는다', room.stateFor(back.playerId).players.length === 2,
+    room.stateFor(back.playerId).players.map((p) => p.nickname).join(','));
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
@@ -513,7 +611,9 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w16_emptyRoundIsAbandoned, w17_emptyProposalDoesNotPass, w18_spectatorCannotChat,
   w19_oneTurnPerPerson, w20_freeChatAfterEveryoneSpoke, w21_voteOnlyAfterExplanations,
   w22_turnTimeoutMovesOn, w23_disconnectedSpeakerSkipped, w24_rejectedProposalReturnsToFree,
-  w25_stateExposesTurnProgress]) {
+  w25_stateExposesTurnProgress, w26_leaveIsImmediate, w27_roundEndsWhenTooFewRemain,
+  w28_disconnectGraceIsTenSeconds, w29_cannotVoteForSomeoneWhoLeft,
+  w30_leavingSpeakerPassesTurn, w31_leaveThenRejoinIsANewSeat]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 

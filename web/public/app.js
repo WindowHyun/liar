@@ -55,6 +55,9 @@ function readStored(key) {
 function writeStored(key, value) {
   try { window.localStorage.setItem(key, value); } catch (e) { /* 사생활 보호 모드 등 */ }
 }
+function clearStored(key) {
+  try { window.localStorage.removeItem(key); } catch (e) { /* 사생활 보호 모드 등 */ }
+}
 function readToken() { return readStored(TOKEN_KEY); }
 
 // 위장 문구를 마크업에 끼워 넣는다.
@@ -164,6 +167,35 @@ $('join-btn').onclick = function () {
   sendMessage({ type: 'join', nickname: nickname, token: readToken() });
 };
 
+/**
+ * 방 나가기. 서버는 이 사람의 자리를 그 자리에서 지운다(끊김과 달리 10초를 기다리지 않는다).
+ * 토큰도 지운다. 남겨 두면 다시 들어올 때 방금 버린 자리로 되살아난다.
+ * 소켓은 그대로 둔다 - 서버가 playerId만 떼어 내므로 같은 연결로 새로 참가할 수 있다.
+ */
+function leaveRoom() {
+  sendMessage({ type: 'leave' });
+  clearStored(TOKEN_KEY);
+  clearStored(NAME_KEY);
+  joined = false;
+  myId = null;
+  myNickname = '';
+  state = null;
+  lastChatCount = -1;
+  liveSignature = '';
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  $('chat-messages').innerHTML = '';
+  $('live-block').innerHTML = '';
+  $('result-panel').classList.add('hidden');
+  $('role-card').classList.add('hidden');
+  $('jump-bar').classList.add('hidden');
+  hideBanner();
+  $('screen-game').classList.add('hidden');
+  $('screen-join').classList.remove('hidden');
+  $('nickname-input').value = '';
+  $('nickname-input').focus();
+}
+
+$('leave-btn').onclick = leaveRoom;
 $('start-btn').onclick = function () { sendMessage({ type: 'start' }); };
 $('vote-btn').onclick = function () { sendMessage({ type: 'callVote' }); };
 $('send-btn').onclick = function () {
@@ -394,17 +426,19 @@ function renderLive(s) {
 /** 다시 그릴지 판단하는 지문. 남은 시간은 뺀다(1초마다 숫자만 갈아 끼운다). */
 function liveSignatureOf(s) {
   // 설명/자유 단계는 관전자에게도 보여 준다. 지금 무엇을 하는 중인지는 모두가 알아야 한다.
+  // 사람이 빠져도 다시 그려야 하므로 남은 인원을 지문에 넣는다.
+  var here = s.round ? s.round.roster.filter(function (r) { return !r.left; }).length : 0;
   if (s.phase === 'turn' && s.round && s.round.speaker) {
-    return 't|' + s.round.speaker.id + '|' + s.round.spokenCount + '|' + s.round.speakTotal;
+    return 't|' + s.round.speaker.id + '|' + s.round.spokenCount + '|' + s.round.speakTotal + '|' + here;
   }
-  if (s.phase === 'free' && s.round) return 'f|' + s.round.spokenCount;
+  if (s.phase === 'free' && s.round) return 'f|' + s.round.spokenCount + '|' + here;
   if (!s.you || !s.you.inRound) return '';
   if (s.phase === 'proposal' && s.round && s.round.proposal) {
     var p = s.round.proposal;
     return 'p|' + p.agree + '|' + p.disagree + '|' + p.total + '|' + s.you.proposalAnswer;
   }
   if (s.phase === 'voting' && s.round) {
-    return 'v|' + s.round.voted + '|' + s.round.total + '|' + s.you.hasVoted + '|' + s.round.roster.length;
+    return 'v|' + s.round.voted + '|' + s.round.total + '|' + s.you.hasVoted + '|' + here;
   }
   if (s.phase === 'guess' && s.you.canGuess) return 'g';
   return '';
@@ -461,10 +495,10 @@ function speakerTrack(s) {
   s.round.roster.forEach(function (r) {
     var p = byId[r.id] || {};
     var pill = document.createElement('span');
-    pill.className = 'pill' + (p.speaking ? ' now' : p.spoke ? ' done' : '');
+    pill.className = 'pill' + (r.left ? ' gone' : p.speaking ? ' now' : p.spoke ? ' done' : '');
     var em = document.createElement('span');
     em.className = 'em';
-    em.textContent = p.speaking ? '🎙️' : p.spoke ? '✅' : '⏳';
+    em.textContent = r.left ? '🚪' : p.speaking ? '🎙️' : p.spoke ? '✅' : '⏳';
     pill.appendChild(em);
     pill.appendChild(document.createTextNode(r.nickname));
     track.appendChild(pill);
@@ -578,7 +612,8 @@ function buildVote(s) {
   } else {
     var opts = document.createElement('div');
     opts.className = 'opts';
-    s.round.roster.filter(function (p) { return p.id !== myId; }).forEach(function (p) {
+    // 이미 방을 나간 사람은 고를 수 없다. 서버도 같은 규칙으로 막는다.
+    s.round.roster.filter(function (p) { return p.id !== myId && !p.left; }).forEach(function (p) {
       var b = document.createElement('button');
       b.className = 'opt';
       b.dataset.id = p.id;
