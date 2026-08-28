@@ -1,7 +1,7 @@
 name: release
 
 # v로 시작하는 태그를 밀면 exe를 만들어 릴리즈에 올린다.
-#   git tag v0.7.1 && git push origin v0.7.1
+#   git tag v0.7.2 && git push origin v0.7.2
 # 수동으로 돌리고 싶으면 Actions 탭에서 "Run workflow"를 누른다.
 on:
   push:

@@ -264,34 +264,57 @@ async function main() {
   await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
   check('X10 다음 라운드가 시작됐다', (await p1.page.textContent('#live-block')).includes('설명'));
 
-  await p3.page.click('#leave-btn');
-  await p1.page.waitForFunction(
+  // 라이어가 나가면 판이 취소되므로, 판이 이어지는지 보려면 시민이 나가야 한다.
+  const cards2 = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
+  const liar2 = pages[cards2.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const citizens = pages.filter((p) => p !== liar2);
+
+  await citizens[0].page.click('#leave-btn');
+  await liar2.page.waitForFunction(
     () => document.querySelectorAll('#participant-list li').length === 2, { timeout: 5000 });
   check('X10 [요청] 나가기를 누르면 남은 사람 목록에서 즉시 사라진다',
-    !(await p1.page.textContent('#participant-list')).includes(p3.name),
-    (await p1.page.textContent('#participant-list')).replace(/\s+/g, ' ').trim());
+    !(await liar2.page.textContent('#participant-list')).includes(citizens[0].name),
+    (await liar2.page.textContent('#participant-list')).replace(/\s+/g, ' ').trim());
   check('X10 나간 사람은 접속 화면으로 돌아간다',
-    (await p3.page.isVisible('#screen-join')) && !(await p3.page.isVisible('#screen-game')));
+    (await citizens[0].page.isVisible('#screen-join')) && !(await citizens[0].page.isVisible('#screen-game')));
+  check('X10 시민 한 명이 빠져도 남은 2명은 라운드를 이어간다',
+    (await liar2.page.locator('#live-block .track .pill').count()) === 3
+    && (await liar2.page.isHidden('#start-btn')));
 
-  // 2명이 남았으므로 라운드는 계속된다
-  check('X10 남은 2명은 라운드를 이어간다',
-    (await p1.page.locator('#live-block .track .pill').count()) === 3);
-
-  await p2.page.click('#leave-btn');
-  await p1.page.waitForFunction(
+  await citizens[1].page.click('#leave-btn');
+  await liar2.page.waitForFunction(
     () => !document.getElementById('start-btn').classList.contains('hidden'), { timeout: 5000 });
-  check('X10 [이슈] 인원이 모자라지면 라운드가 그 자리에서 취소되고 로비로 돌아온다',
-    (await p1.page.textContent('#chat-messages')).includes('라운드가 취소되었습니다'));
+  check('X10 [이슈] 혼자 남으면 라운드가 그 자리에서 취소되고 로비로 돌아온다',
+    (await liar2.page.textContent('#chat-messages')).includes('라운드가 취소되었습니다'));
   check('X10 [이슈] 혼자 남아도 게임 시작 버튼이 다시 보인다',
-    await p1.page.isVisible('#start-btn'));
+    await liar2.page.isVisible('#start-btn'));
 
   // 나갔던 사람이 다시 들어오면 바로 시작할 수 있어야 한다
-  await p3.page.fill('#nickname-input', p3.name);
-  await p3.page.click('#join-btn');
-  await p1.page.waitForFunction(
+  await citizens[0].page.fill('#nickname-input', citizens[0].name);
+  await citizens[0].page.click('#join-btn');
+  await liar2.page.waitForFunction(
     () => !document.getElementById('start-btn').disabled, { timeout: 5000 });
   check('X10 [이슈] 다시 2명이 되면 곧바로 시작할 수 있다',
-    !(await p1.page.isDisabled('#start-btn')));
+    !(await liar2.page.isDisabled('#start-btn')));
+
+  // ── 라이어가 나가면 판이 취소된다 ──
+  await liar2.page.click('#start-btn');
+  const here = [liar2, citizens[0]];
+  await Promise.all(here.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
+  const cards3 = await Promise.all(here.map((p) => p.page.textContent('#role-card')));
+  const liar3 = here[cards3.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const stays = here.find((p) => p !== liar3);
+
+  await liar3.page.click('#leave-btn');
+  await stays.page.waitForFunction(
+    () => !document.getElementById('start-btn').classList.contains('hidden'), { timeout: 5000 });
+  check('X11 [이슈] 라이어가 나가면 라운드가 취소된다',
+    (await stays.page.textContent('#chat-messages')).includes('나가서 이번 라운드는 취소되었습니다'),
+    (await stays.page.textContent('#chat-messages')).split('오전').pop().trim().slice(0, 60));
+  check('X11 [이슈] 취소된 판은 전적에 쌓이지 않는다',
+    (await stays.page.textContent('#tally-label')).includes('1판 ·'),
+    (await stays.page.textContent('#tally-label')).trim() || '(비어 있음)');
+  check('X11 취소 뒤에도 대화가 잠기지 않는다', !(await stays.page.isDisabled('#chat-input')));
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }

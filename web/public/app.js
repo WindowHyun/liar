@@ -344,6 +344,13 @@ function systemLine(m) {
     tail.textContent = '  ' + LABELS.liar + josa(LABELS.liar, '은 ', '는 ') + m.liarName
       + '님, 제시어는 "' + m.word + '"' + josa(m.word, '이었습니다.', '였습니다.');
     p.appendChild(tail);
+  } else if (m.code === 'liarLeft' && m.who) {
+    // 누가 라이어였는지는 판이 무효가 된 뒤라 밝혀도 된다. 왜 갑자기 끝났는지가 더 중요하다.
+    p.appendChild(who(m.who));
+    p.appendChild(document.createTextNode('님이 '));
+    p.appendChild(liar());
+    p.appendChild(document.createTextNode(
+      josa(LABELS.liar, '이었습니다', '였습니다') + '. 나가서 이번 라운드는 취소되었습니다.'));
   } else if (m.code === 'turnSkipped' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 설명 시간을 넘겼습니다.'));
@@ -355,7 +362,7 @@ function systemLine(m) {
       ? '자유 대화 시간이 끝났습니다. 투표를 진행합니다.'
       : '투표를 진행합니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
   } else if (m.code === 'proposalRejected') {
-    p.textContent = '투표 제안이 부결되었습니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ') 설명을 이어가세요.';
+    p.textContent = '투표 제안이 부결되었습니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ') 대화를 이어가세요.';
   } else {
     p.textContent = m.text || '';
   }

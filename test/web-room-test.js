@@ -261,6 +261,8 @@ function w12_proposalRejected() {
   check('W12 반대가 절반을 넘으면 그 자리에서 부결된다 (남은 사람을 기다리지 않는다)',
     room.stateFor(d).phase === 'free', room.stateFor(d).phase);
   check('W12 부결되면 자유 대화로 돌아가 이야기를 이어갈 수 있다', room.say(a, '계속 이야기합니다') === null);
+  check('W12 부결 안내가 옛 진행 방식(설명 단계)을 가리키지 않는다',
+    room.stateFor(a).chat.some((m) => m.code === 'proposalRejected' && !m.text.includes('설명을')));
   check('W12 부결 뒤에 다시 제안할 수 있다', room.callVote(b) === null);
 }
 
@@ -603,6 +605,106 @@ function w31_leaveThenRejoinIsANewSeat() {
     room.stateFor(back.playerId).players.map((p) => p.nickname).join(','));
 }
 
+// ── 튕겼다 돌아오기 / 라이어 이탈 ────────────────────────────────────
+
+function w32_rejoinAfterGraceKeepsSeat() {
+  // [이슈] 10초를 넘겨 돌아오면 관전자가 되어, 그 판이 끝날 때까지 말을 못 했다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0); // 라이어 = A
+  room.start();
+  passTurns(room);
+  const c = players[2].playerId;
+  const token = players[2].token;
+
+  room.disconnect(c);
+  advance(11000); // 유예를 넘겨 목록에서 지워졌다
+  check('W32 유예를 넘기면 목록에서는 지워진다',
+    room.stateFor(players[0].playerId).players.every((p) => p.id !== c));
+
+  const back = room.join({ nickname: 'C', token });
+  const s = room.stateFor(back.playerId);
+  check('W32 [이슈] 늦게 돌아와도 원래 자리로 앉는다',
+    back.restored === true && back.playerId === c, `${back.playerId} vs ${c}`);
+  check('W32 [이슈] 돌아온 사람은 관전자가 아니라 참가자다', s.you.inRound === true);
+  check('W32 [이슈] 돌아오면 바로 대화할 수 있다',
+    room.say(back.playerId, '다시 왔어요') === null);
+  check('W32 유령이 늘어나지 않는다', s.players.length === 3,
+    s.players.map((p) => p.nickname).join(','));
+  check('W32 남의 토큰이 상태로 새어 나가지 않는다', !JSON.stringify(s).includes(token));
+}
+
+function w33_leavingGivesUpTheSeat() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const token = players[2].token;
+
+  room.leave(players[2].playerId); // 스스로 나갔다 - 자리를 버린 것이다
+  const back = room.join({ nickname: 'C', token });
+  check('W33 나가기를 누른 사람은 같은 토큰으로도 옛 자리로 돌아오지 않는다',
+    back.restored === false && back.playerId !== players[2].playerId);
+  check('W33 그래서 이번 판은 관전한다',
+    room.stateFor(back.playerId).you.inRound === false);
+}
+
+function w34_liarLeavingCancelsRound() {
+  // [이슈] 라이어가 나가도 판이 계속돼서, 도망간 라이어가 승리로 기록됐다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 1); // 라이어 = B
+  room.start();
+  passTurns(room);
+  const [a, b] = idsOf(players);
+  check('W34 라이어는 B다', room._debug().round.liarId === b);
+
+  room.leave(b);
+  const s = room.stateFor(a);
+  check('W34 [이슈] 라이어가 나가면 그 자리에서 라운드가 취소된다', s.phase === 'lobby', s.phase);
+  check('W34 [이슈] 도망간 라이어에게 승리를 주지 않는다',
+    s.record.rounds === 0 && s.record.liarWins === 0, JSON.stringify(s.record));
+  check('W34 [이슈] 왜 끝났는지 대화에 남는다',
+    s.chat.some((m) => m.code === 'liarLeft' && m.who === 'B'));
+  check('W34 곧바로 다음 판을 시작할 수 있다', room.start() === null);
+}
+
+function w35_liarDisconnectGetsTheSameGrace() {
+  const { room, players } = makeRoom(['A', 'B', 'C'], 1); // 라이어 = B
+  room.start();
+  passTurns(room);
+  const b = players[1].playerId;
+  const token = players[1].token;
+
+  room.disconnect(b); // 튕겼다 - 돌아올 수 있다
+  check('W35 라이어가 튕긴 것만으로는 판을 접지 않는다',
+    room._debug().phase === 'free', room._debug().phase);
+
+  const back = room.join({ nickname: 'B', token });
+  check('W35 10초 안에 돌아오면 라이어 그대로 이어서 한다',
+    room.stateFor(back.playerId).you.isLiar === true && room._debug().phase === 'free');
+
+  room.disconnect(back.playerId);
+  advance(11000);
+  check('W35 10초를 넘기면 그때 라운드를 접는다',
+    room._debug().phase === 'lobby', room._debug().phase);
+}
+
+function w36_twoPlayerRoundIsNotCancelled() {
+  // 2명으로 하는 판이 도중에 "인원 부족"으로 취소되면 안 된다.
+  const { room, players } = makeRoom(['A', 'B'], 0);
+  room.start();
+  const [a, b] = idsOf(players);
+  passTurns(room);
+  check('W36 2명이어도 설명 단계를 지나 자유 대화까지 간다',
+    room._debug().phase === 'free', room._debug().phase);
+
+  room.callVote(a);
+  room.respondProposal(a, true);
+  check('W36 2명이어도 투표까지 간다', room._debug().phase === 'voting', room._debug().phase);
+
+  room.vote(a, b); room.vote(b, a);
+  const s = room.stateFor(a);
+  check('W36 2명짜리 판이 끝까지 진행돼 결과가 나온다',
+    s.phase === 'result' && !!s.result, s.phase);
+  check('W36 도중에 인원 부족으로 취소되지 않았다',
+    !s.chat.some((m) => m.code === 'abandoned'));
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
@@ -613,7 +715,9 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w22_turnTimeoutMovesOn, w23_disconnectedSpeakerSkipped, w24_rejectedProposalReturnsToFree,
   w25_stateExposesTurnProgress, w26_leaveIsImmediate, w27_roundEndsWhenTooFewRemain,
   w28_disconnectGraceIsTenSeconds, w29_cannotVoteForSomeoneWhoLeft,
-  w30_leavingSpeakerPassesTurn, w31_leaveThenRejoinIsANewSeat]) {
+  w30_leavingSpeakerPassesTurn, w31_leaveThenRejoinIsANewSeat,
+  w32_rejoinAfterGraceKeepsSeat, w33_leavingGivesUpTheSeat, w34_liarLeavingCancelsRound,
+  w35_liarDisconnectGetsTheSameGrace, w36_twoPlayerRoundIsNotCancelled]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 

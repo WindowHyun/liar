@@ -95,17 +95,20 @@ function createRoom(options) {
   }
 
   /**
-   * [W-1] 라운드를 이어갈 인원이 안 되면 그 판을 접고 로비로 되돌린다.
+   * [W-1] 진행 중인 판에 혼자 남으면(또는 아무도 안 남으면) 그 판을 접고 로비로 되돌린다.
    *
-   * 예전에는 "한 명도 안 남았을 때"만 접었다. 그래서 2명이 하다가 한 명이 나가면 남은
+   * 예전에는 "한 명도 안 남았을 때"만 접었다. 그래서 둘이 하다가 한 명이 나가면 남은
    * 사람은 설명 60초 → 자유 대화 60초 → 투표 30초를 혼자 다 흘려보내야 로비로 돌아왔다.
    * 그동안 게임 시작 버튼은 잠겨 있어서, 다른 사람이 새로 들어와도 아무것도 할 수 없었다.
-   * 판이 성립하지 않는 순간(남은 참가자 < 최소 인원) 바로 접는다.
+   *
+   * 기준은 딱 "혼자 남았는가"다. 시작 조건(MIN_PLAYERS)과 묶지 않는다. 2명으로 하는 판이
+   * 흔한데, 시작 인원을 나중에 3명으로 올리면 2명짜리 판이 도중에 취소돼 버린다.
+   * 남은 사람이 둘 이상이면 판은 그대로 이어간다.
    */
-  function abandonRoundIfTooFew() {
+  function abandonRoundIfAlone() {
     if (phase === 'lobby' || phase === 'result') return false;
     const remaining = activeRoster().length;
-    if (remaining >= MIN_PLAYERS) return false;
+    if (remaining > 1) return false;
 
     clearPhaseTimer();
     round = null;
@@ -115,8 +118,30 @@ function createRoom(options) {
       kind: 'system', code: 'abandoned', remaining, at: now(),
       text: remaining === 0
         ? '참가자가 모두 나가 라운드가 취소되었습니다.'
-        : `남은 참가자가 ${MIN_PLAYERS}명보다 적어 라운드가 취소되었습니다.`,
+        : '혼자 남아 라운드가 취소되었습니다.',
     });
+    trimChat();
+    return true;
+  }
+
+  /**
+   * 라이어가 빠진 판은 성립하지 않는다. 남은 사람끼리 계속해 봐야 아무도 라이어가 아니고,
+   * 예전에는 그대로 진행돼서 "도망간 라이어 승"으로 전적까지 쌓였다.
+   * 무승부로 접는다 - 도망친 쪽에 승리를 주지도, 남은 쪽에 공짜 승리를 주지도 않는다.
+   */
+  function abandonRoundIfLiarGone() {
+    if (phase === 'lobby' || phase === 'result') return false;
+    if (!round || players.has(round.liarId)) return false;
+    // 아무도 안 남았으면 "참가자가 모두 나가"가 더 맞는 설명이다. 그쪽에 넘긴다.
+    if (activeRoster().length === 0) return false;
+
+    const who = nameOf(round.liarId); // round을 비우기 전에 읽어야 한다
+    clearPhaseTimer();
+    round = null;
+    result = null;
+    phase = 'lobby';
+    chat.push({ kind: 'system', code: 'liarLeft', who, at: now(),
+      text: `${who}님이 나가 라운드가 취소되었습니다.` });
     trimChat();
     return true;
   }
@@ -155,6 +180,20 @@ function createRoom(options) {
         changed();
         return { playerId: player.id, token: player.token, restored: true };
       }
+
+      // 10초 유예를 넘겨 목록에서는 지워졌지만, 이 판의 참가자였던 사람.
+      // 이게 없으면 잠깐 튕긴 사람이 관전자가 되어 그 판이 끝날 때까지 말을 못 한다.
+      // (스스로 나가기를 누른 사람은 자리 기록도 지우므로 여기 걸리지 않는다.)
+      const seat = round && round.seats.get(input.token);
+      if (seat && !players.has(seat.id)) {
+        const revived = {
+          id: seat.id, token: input.token, nickname: seat.nickname,
+          connected: true, joinedAt: now(),
+        };
+        players.set(revived.id, revived);
+        changed();
+        return { playerId: revived.id, token: revived.token, restored: true };
+      }
     }
 
     const player = {
@@ -181,12 +220,13 @@ function createRoom(options) {
       const still = players.get(playerId);
       if (!still || still.connected) return;
       players.delete(playerId);
-      // 이 사람이 마지막이었을 수도 있다.
-      if (!abandonRoundIfTooFew() && phase === 'voting') maybeTally();
+      // 이 사람이 마지막이었을 수도, 라이어였을 수도 있다.
+      if (abandonRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
+      if (phase === 'voting') maybeTally();
       else changed();
     }, DROP_MS);
 
-    if (abandonRoundIfTooFew()) { changed(); return; }
+    if (abandonRoundIfAlone()) { changed(); return; }
 
     // 끊긴 사람을 계속 기다리면 투표가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
@@ -207,9 +247,11 @@ function createRoom(options) {
     const player = players.get(playerId);
     if (!player) return;
     players.delete(playerId);
+    // 자리를 버린 것이므로 되찾을 기록도 지운다. 남겨 두면 다시 들어올 때 되살아난다.
+    if (round) round.seats.delete(player.token);
 
-    // 판이 성립하지 않게 됐으면 여기서 정리된다(round가 null이 되므로 아래는 건너뛴다).
-    if (abandonRoundIfTooFew()) { changed(); return; }
+    // 라이어가 나갔거나 혼자 남았으면 여기서 판이 정리된다(round가 null이 되므로 아래는 건너뛴다).
+    if (abandonRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
 
     // 나간 사람을 계속 기다리면 그 단계가 끝나지 않는다.
     if (phase === 'voting') maybeTally();
@@ -250,6 +292,9 @@ function createRoom(options) {
       spoken: new Set(),        // 대화권을 실제로 쓴 사람 (1인 1회)
       speakEndsAt: null,
       freeEndsAt: null,
+      // 이 판의 자리 기록(토큰 → 자리). 10초 유예를 넘겨 돌아온 사람을 원래 자리에
+      // 앉히는 데만 쓴다. 토큰이 들어 있으므로 상태로는 절대 내보내지 않는다.
+      seats: new Map(roster.map((p) => [p.token, { id: p.id, nickname: p.nickname }])),
     };
     phase = 'turn';
     chat.push({ kind: 'system', code: 'roundStart', text: '게임이 시작되었습니다.', at: now() });
@@ -434,7 +479,7 @@ function createRoom(options) {
       phaseTimer = null;
       if (phase === 'free') beginVoting();
     }, FREE_MS);
-    chat.push({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 설명을 이어가세요.`, at: now() });
+    chat.push({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 대화를 이어가세요.`, at: now() });
     trimChat();
     changed();
   }

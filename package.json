@@ -1,6 +1,6 @@
 {
   "name": "liar-game",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "LAN 라이어 게임 - Electron(자동 발견) / 웹(서버 1대) 두 가지로 실행",
   "main": "electron/main.js",
