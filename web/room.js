@@ -27,6 +27,34 @@ const crypto = require('crypto');
 const { normalizeWord } = require('./protocol');
 const WORD_LIST = require('./words');
 
+/**
+ * [H4] 제시어 목록 형식 검사.
+ *
+ * 목록은 사람이 손으로 고치는 데이터라 대괄호나 쉼표 하나가 빠지기 쉽다. 검사가 없으면
+ * 카테고리가 "사", 제시어가 "과"인 채로 게임이 그냥 굴러가 버린다(조용한 실패).
+ * 여기서 크게 실패시켜야 릴리즈 전에 걸린다.
+ */
+function validateWordList(list) {
+  const where = 'web/words.js';
+  if (!Array.isArray(list) || list.length === 0) {
+    throw new Error(`${where}: 제시어 목록이 비어 있습니다.`);
+  }
+  list.forEach((entry, i) => {
+    const at = `${where} ${i + 1}번째 항목`;
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      throw new Error(`${at}: [카테고리, 제시어] 두 칸짜리 배열이어야 합니다. (받은 값: ${JSON.stringify(entry)})`);
+    }
+    const [category, word] = entry;
+    if (typeof category !== 'string' || category.trim() === '') {
+      throw new Error(`${at}: 카테고리가 비어 있습니다. (받은 값: ${JSON.stringify(category)})`);
+    }
+    if (typeof word !== 'string' || word.trim() === '') {
+      throw new Error(`${at}: 제시어가 비어 있습니다. (카테고리: ${category})`);
+    }
+  });
+}
+validateWordList(WORD_LIST);
+
 const MIN_PLAYERS = 2;
 const TURN_ROUNDS = 2;          // 설명을 몇 바퀴 도는가. 1차는 첫인상, 2차는 서로를 듣고 나서.
 const SPEAK_MS = 60000;         // 한 사람의 설명 차례 제한 시간
@@ -152,6 +180,39 @@ function createRoom(options) {
     return picked;
   }
 
+  /**
+   * [H1·H2] 판에서 빠진 사람의 흔적을 개표에서 지운다.
+   *
+   *   - 그 사람이 던진 표      : 이미 떠난 판의 결과를 가르면 안 된다.
+   *                             (불리해지면 표를 던지고 나가는 것이 이득이 되어 버린다)
+   *   - 그 사람에게 간 표      : 방에 없는 사람이 지목되어 "○○님이 지목되었습니다"가
+   *                             뜨는 일을 막는다. 던진 사람은 다시 고르면 된다.
+   *   - 그 사람의 찬반 답       : 인원(분모)에서는 빠졌는데 답(분자)만 남으면 안 된다.
+   */
+  function forgetFromRound(playerId) {
+    if (!round) return;
+    round.votes.delete(playerId);
+    for (const [voter, target] of round.votes) {
+      if (target === playerId) round.votes.delete(voter);
+    }
+    if (round.proposal) round.proposal.answers.delete(playerId);
+  }
+
+  /**
+   * [M2] 같은 닉네임이 여러 명이면 투표 후보가 "철수, 철수"로 떠서 누구를 찍는지 알 수 없다.
+   * 서버는 id로 정확히 처리하지만, 누르는 사람이 잘못 누른다. 뒤에 번호를 붙여 구분한다.
+   */
+  function uniqueNickname(base, exceptId) {
+    const name = base.trim() === '' ? '참가자' : base;
+    const taken = new Set([...players.values()].filter((p) => p.id !== exceptId).map((p) => p.nickname));
+    if (!taken.has(name)) return name;
+    for (let n = 2; n <= 99; n += 1) {
+      const candidate = `${name}(${n})`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${name}(99)`;
+  }
+
   function nameOf(playerId) {
     const player = players.get(playerId);
     if (player) return player.nickname;
@@ -162,7 +223,9 @@ function createRoom(options) {
   // ───────────────────────────── 참가 / 접속 ─────────────────────────────
 
   function join(input) {
-    const nickname = String(input.nickname).trim().slice(0, 24);
+    // [L3] slice()는 UTF-16 기준이라 24번째가 이모지 중간이면 깨진 글자가 남는다.
+    // 글자(코드 포인트) 단위로 자른다.
+    const nickname = Array.from(String(input.nickname).trim()).slice(0, 24).join('');
 
     // 토큰이 맞으면 같은 사람으로 되살린다. 새로고침하거나 잠깐 끊겨도 자리를 잃지 않는다.
     // 단, 그 자리에 이미 누가 접속해 있으면 되살리지 않는다. 한 PC에서 창을 두 개 띄우면
@@ -173,7 +236,7 @@ function createRoom(options) {
         if (player.token !== input.token) continue;
         if (player.connected) break; // 이미 쓰고 있는 자리 - 새 참가자로 들어간다
         player.connected = true;
-        if (phase === 'lobby' || phase === 'result') player.nickname = nickname;
+        if (phase === 'lobby' || phase === 'result') player.nickname = uniqueNickname(nickname, player.id);
         changed();
         return { playerId: player.id, token: player.token, restored: true };
       }
@@ -196,7 +259,7 @@ function createRoom(options) {
     const player = {
       id: crypto.randomUUID().slice(0, 8),
       token: crypto.randomBytes(16).toString('hex'),
-      nickname,
+      nickname: uniqueNickname(nickname, null),
       connected: true,
       joinedAt: now(),
     };
@@ -217,6 +280,7 @@ function createRoom(options) {
       const still = players.get(playerId);
       if (!still || still.connected) return;
       players.delete(playerId);
+      forgetFromRound(playerId);
       // 이 사람이 마지막이었을 수도, 라이어였을 수도 있다.
       if (endRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
       if (phase === 'voting') maybeTally();
@@ -246,6 +310,7 @@ function createRoom(options) {
     players.delete(playerId);
     // 자리를 버린 것이므로 되찾을 기록도 지운다. 남겨 두면 다시 들어올 때 되살아난다.
     if (round) round.seats.delete(player.token);
+    forgetFromRound(playerId);
 
     // 라이어가 나갔거나 혼자 남았으면 여기서 판이 끝난다(round가 null이 되므로 아래는 건너뛴다).
     if (endRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
@@ -374,8 +439,16 @@ function createRoom(options) {
     changed();
   }
 
+  /**
+   * [M4] 상한을 넘으면 밀어낸다. 단, 사람이 친 말을 먼저 버리고 안내(System) 줄은 남긴다.
+   * 한 사람이 도배하면 "누가 지목됐는지", "결과가 무엇인지" 같은 줄까지 통째로 밀려나서,
+   * 재접속한 사람이 판이 어떻게 돌아갔는지 전혀 알 수 없게 된다.
+   */
   function trimChat() {
-    while (chat.length > CHAT_MAX) chat.shift();
+    while (chat.length > CHAT_MAX) {
+      const oldestChat = chat.findIndex((m) => m.kind === 'chat');
+      chat.splice(oldestChat >= 0 ? oldestChat : 0, 1);
+    }
   }
 
   /** 대화를 한 줄 남긴다. 번호는 여기서만 붙인다. */
@@ -699,4 +772,7 @@ function createRoom(options) {
   };
 }
 
-module.exports = { createRoom, MIN_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS };
+module.exports = {
+  createRoom, validateWordList,
+  MIN_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
+};

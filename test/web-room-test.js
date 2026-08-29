@@ -760,6 +760,126 @@ function w38_secondRoundStillOnePerPerson() {
     typeof room.say(order2[0], '한 번 더') === 'string');
 }
 
+// ── 위험 영역 점검에서 나온 것들 ────────────────────────────────────
+
+function w39_departedVotesAreDropped() {
+  // [H1] 나간 사람의 표가 개표에 남아 결과를 갈랐다.
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0); // 라이어 = A
+  room.start();
+  const [a, b, c, d] = idsOf(players);
+  passProposal(room, [a, b, c, d]);
+
+  room.vote(b, c);
+  check('W39 B의 표가 들어갔다', room._debug().round.votes.size === 1);
+
+  room.leave(b);
+  check('W39 [H1] 나가면 그 사람이 던진 표도 함께 사라진다',
+    room._debug().round.votes.size === 0, String(room._debug().round.votes.size));
+
+  room.vote(a, d); room.vote(c, d); room.vote(d, c);
+  const s = room.stateFor(a);
+  check('W39 [H1] 남은 사람 표만으로 개표된다 (D 단독 2표)',
+    s.result && s.result.reason === 'wrongAccusation' && s.result.accused.nickname === 'D',
+    s.result ? `${s.result.reason}/${s.result.accused ? s.result.accused.nickname : '-'}` : '아직');
+}
+
+function w40_votesForDepartedAreDropped() {
+  // [H2] 방에 없는 사람이 지목되어 "○○님이 지목되었습니다"가 떴다.
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0); // 라이어 = A
+  room.start();
+  const [a, b, c, d] = idsOf(players);
+  passProposal(room, [a, b, c, d]);
+
+  room.vote(c, b); room.vote(d, b);   // C와 D가 B를 지목
+  room.leave(b);                       // B가 나간다
+  check('W40 [H2] 나간 사람에게 갔던 표도 사라진다',
+    room._debug().round.votes.size === 0, String(room._debug().round.votes.size));
+  check('W40 [H2] 던졌던 사람은 다시 고를 수 있다',
+    room.stateFor(c).you.hasVoted === false);
+
+  room.vote(a, c); room.vote(c, a); room.vote(d, c);
+  const s = room.stateFor(a);
+  check('W40 [H2] 방에 없는 사람이 지목되지 않는다',
+    !s.result || !s.result.accused || s.result.accused.nickname !== 'B',
+    s.result && s.result.accused ? s.result.accused.nickname : '지목 없음');
+}
+
+function w41_departedProposalAnswerIsDropped() {
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const [a, b] = idsOf(players);
+  passTurns(room);
+
+  room.callVote(a);
+  room.respondProposal(b, true);
+  check('W41 찬성 1표가 들어갔다', room.stateFor(a).round.proposal.agree === 1);
+
+  room.leave(b);
+  const p = room.stateFor(a).round;
+  check('W41 나간 사람의 찬반 답도 함께 사라진다',
+    !p.proposal || p.proposal.agree === 0,
+    p.proposal ? `찬성 ${p.proposal.agree} / 인원 ${p.proposal.total}` : '이미 정리됨');
+}
+
+function w42_duplicateNicknames() {
+  // [M2] 같은 닉네임이면 투표 후보가 "철수, 철수"로 떠서 구분이 안 됐다.
+  const { room } = makeRoom(['철수', '철수', '철수'], 0);
+  const names = room.stateFor('x').players.map((p) => p.nickname);
+  check('W42 [M2] 겹치는 닉네임에는 번호가 붙는다',
+    names.join(',') === '철수,철수(2),철수(3)', names.join(','));
+  check('W42 [M2] 모두 서로 다르다', new Set(names).size === names.length);
+}
+
+function w43_nicknameEdgeCases() {
+  const room = createRoom({ setTimer, clearTimer, now });
+  const emoji = room.join({ nickname: '🎉'.repeat(30) });
+  const shown = room.stateFor(emoji.playerId).players[0].nickname;
+  check('W43 [L3] 이모지 닉네임이 중간에서 깨지지 않는다',
+    Array.from(shown).length === 24 && !shown.includes('\uFFFD'),
+    `글자 수 ${Array.from(shown).length}`);
+
+  const blank = room.join({ nickname: '   ' });
+  check('W43 빈 닉네임은 기본 이름으로 들어간다',
+    room.stateFor(blank.playerId).players[1].nickname === '참가자',
+    room.stateFor(blank.playerId).players[1].nickname);
+}
+
+function w44_systemLinesSurviveFlooding() {
+  // [M4] 한 사람이 도배하면 "누가 지목됐는지" 같은 안내까지 밀려났다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 1);
+  room.start();
+  const [a, b, c] = idsOf(players);
+  passProposal(room, [a, b, c]);
+  room.vote(a, b); room.vote(c, b); room.vote(b, a);
+  room.guess(b, '틀린답'); // 결과까지 낸다
+
+  for (let i = 0; i < 200; i += 1) room.say(a, `도배 ${i}`);
+  const chat = room.stateFor(a).chat;
+  check('W44 대화 상한은 그대로 지켜진다', chat.length <= 100, String(chat.length));
+  check('W44 [M4] 도배해도 결과 안내는 남는다',
+    chat.some((m) => m.code === 'result'), chat.filter((m) => m.kind === 'system').length + '개 안내 남음');
+  check('W44 [M4] 지목 안내도 남는다', chat.some((m) => m.code === 'accused'));
+}
+
+function w45_wordListIsValidated() {
+  // [H4] 목록이 깨지면 조용히 이상하게 굴러갔다. 이제는 불러올 때 크게 실패한다.
+  const { validateWordList } = require('../web/room');
+  const cases = [
+    ['빈 목록', []],
+    ['배열이 아님', ['사과']],
+    ['카테고리 없음', [[null, '사과']]],
+    ['제시어 빈 문자열', [['과일', '']]],
+    ['칸 수가 다름', [['과일', '사과', '여분']]],
+  ];
+  let caught = 0;
+  for (const [, list] of cases) {
+    try { validateWordList(list); } catch { caught += 1; }
+  }
+  check('W45 [H4] 깨진 제시어 목록은 전부 걸러진다', caught === cases.length, `${caught}/${cases.length}`);
+  check('W45 [H4] 실제로 쓰는 목록은 통과한다',
+    (() => { try { validateWordList(require('../web/words')); return true; } catch (e) { return e.message; } })() === true);
+}
+
 console.log('웹 규칙 테스트');
 for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameResult, w4_liarGuessFlow,
   w5_guessTimeout, w6_voteTimeoutAndTie, w7_disconnectDoesNotBlockVote, w8_reconnectKeepsSeat,
@@ -773,7 +893,10 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w30_leavingSpeakerPassesTurn, w31_leaveThenRejoinIsANewSeat,
   w32_rejoinAfterGraceKeepsSeat, w33_leavingGivesUpTheSeat, w34_liarLeavingCancelsRound,
   w35_liarDisconnectGetsTheSameGrace, w36_twoPlayerRoundIsNotCancelled,
-  w37_twoSpeakRounds, w38_secondRoundStillOnePerPerson]) {
+  w37_twoSpeakRounds, w38_secondRoundStillOnePerPerson,
+  w39_departedVotesAreDropped, w40_votesForDepartedAreDropped, w41_departedProposalAnswerIsDropped,
+  w42_duplicateNicknames, w43_nicknameEdgeCases, w44_systemLinesSurviveFlooding,
+  w45_wordListIsValidated]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 

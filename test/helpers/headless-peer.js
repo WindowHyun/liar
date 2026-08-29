@@ -17,5 +17,8 @@ const peer = createPeer({
 
 peer.start();
 
+// 테스트에서 "게임 서버만 죽었다"를 만든다. peer는 계속 돌면서 알림을 보낸다.
+process.on('SIGUSR2', async () => { await peer._debugStopServer(); });
+
 process.on('SIGTERM', async () => { await peer.stop(); process.exit(0); });
 process.on('SIGINT', async () => { await peer.stop(); process.exit(0); });

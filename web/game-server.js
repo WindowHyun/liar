@@ -241,7 +241,10 @@ function createGameServer(options) {
       server = http.createServer(handleHttp);
       // [S-1] 이 서버는 자기가 내려준 화면(같은 출처)이나 Electron 창(로컬 출처)만
       // 상대한다. 참가자가 열어 둔 아무 웹페이지가 붙어 오는 것(CSWSH)을 막는다.
-      wss = new WebSocketServer({ server, verifyClient: allowOrigin });
+      // [M3] 기본값이 100MB다. 이 게임이 주고받는 가장 큰 메시지는 300자 채팅이라
+      // 그만한 프레임을 받아 줄 이유가 없다. 화면 쪽 버그 하나로 서버 메모리가
+      // 통째로 물리는 일을 막는다.
+      wss = new WebSocketServer({ server, verifyClient: allowOrigin, maxPayload: 16 * 1024 });
       wss.on('connection', handleConnection);
 
       // ws는 http 서버의 error를 WebSocketServer로도 다시 올린다. 한쪽만 들으면

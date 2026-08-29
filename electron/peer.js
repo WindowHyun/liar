@@ -122,21 +122,39 @@ function createPeer(options) {
     if (switching || !discovery) return;
     if (Date.now() - startedAt < ELECTION_GRACE_MS) { notifyIfChanged(); return; }
 
+    // [H3] 게임 서버가 나도 모르게 죽어 있을 수 있다. hosting 플래그는 "호스트를 넘길 때"만
+    // 꺼지도록 되어 있어서, 서버가 다른 이유로 죽으면 계속 "내가 호스트"라고 알리게 된다.
+    // 그러면 다른 PC들은 규칙 1(호스트 주장자 우선)에 따라 나를 호스트로 보고 아무도
+    // 서버를 켜지 않는다 - 전원이 접속 실패만 반복하는 상태로 굳는다.
+    if (hosting && (!gameServer || !gameServer.isRunning())) {
+      warn('[호스트] 게임 서버가 내려가 있습니다. 호스트 자리를 내려놓고 다시 정합니다.');
+      gameServer = null;
+      hosting = false;
+    }
+
     const host = electHost(aliveNodes());
     const shouldHost = host.isMe;
 
+    // [L4] switching은 반드시 풀려야 한다. 켜진 채로 굳으면 이 PC는 다시는 호스트를
+    // 맡지도, 넘기지도 못한다.
     if (shouldHost && !hosting) {
       switching = true;
-      log(`[호스트 전환] 내가 호스트가 됩니다 (${nodeId})`);
-      hosting = await startServerWithRetry();
-      switching = false;
+      try {
+        log(`[호스트 전환] 내가 호스트가 됩니다 (${nodeId})`);
+        hosting = await startServerWithRetry();
+      } finally {
+        switching = false;
+      }
     } else if (!shouldHost && hosting) {
       switching = true;
-      log(`[호스트 전환] ${host.nodeId}에게 호스트를 넘깁니다`);
-      await gameServer.stop();
-      gameServer = null;
-      hosting = false;
-      switching = false;
+      try {
+        log(`[호스트 전환] ${host.nodeId}에게 호스트를 넘깁니다`);
+        if (gameServer) await gameServer.stop();
+      } finally {
+        gameServer = null;
+        hosting = false;
+        switching = false;
+      }
     }
     notifyIfChanged();
   }
@@ -145,6 +163,10 @@ function createPeer(options) {
     nodeId,
     status,
     isHosting: () => hosting,
+
+    // 테스트에서 "게임 서버만 죽은 상황"을 만들기 위한 것. 앱은 쓰지 않는다.
+    // hosting 플래그는 그대로 두므로, 선출이 그걸 알아채는지 확인할 수 있다.
+    async _debugStopServer() { if (gameServer) await gameServer.stop(); },
 
     start() {
       discovery = createDiscovery({

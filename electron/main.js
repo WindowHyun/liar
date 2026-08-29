@@ -14,7 +14,7 @@
  */
 
 const path = require('path');
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const { createPeer, DEFAULT_PORT } = require('./peer');
 const { createUiServer } = require('./ui-server');
 const { log, error, LOG_PATH } = require('../logger');
@@ -95,8 +95,21 @@ app.whenReady().then(async () => {
     error(`[프록시 설정 실패] ${err.message} - 사내 프록시가 있으면 접속이 안 될 수 있습니다.`);
   }
 
+  // [M1] 화면 서버를 못 띄우면 창이 아예 안 뜬다. 그대로 두면 사용자는 exe를 눌러도
+  // 아무 일도 일어나지 않는 것처럼 보이고, 단서는 로그 파일에만 남는다.
   uiServer = createUiServer();
-  uiPort = await uiServer.start();
+  try {
+    uiPort = await uiServer.start();
+  } catch (err) {
+    error(`[화면 서버 실패] ${err.code || ''} ${err.message}`);
+    dialog.showErrorBox(
+      '실행할 수 없습니다',
+      `화면을 띄울 포트(55510~55520)를 모두 다른 프로그램이 쓰고 있습니다.\n`
+      + `해당 프로그램을 끄고 다시 실행해 주세요.\n\n자세한 내용: ${LOG_PATH}`,
+    );
+    app.quit();
+    return;
+  }
 
   // [E-4] 화면은 로컬 파일만 쓴다. 외부에서 무엇도 불러오지 않도록 못 박는다.
   // (이게 없으면 Electron이 렌더러 콘솔에 보안 경고를 계속 띄운다.)
