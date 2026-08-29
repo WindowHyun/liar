@@ -12,12 +12,14 @@
  *   D6 호스트의 알림이 잠깐 끊겨도 호스트를 뺏지 않는다 (판이 날아가지 않는다)
  *   D7 호스트의 게임 서버가 죽으면 호스트 자리를 내려놓고 다시 정한다
  *   D8 호스트가 랜선+와이파이로 동시에 붙어 있어도 붙을 주소가 흔들리지 않는다
+ *   D9 게임 포트를 다른 프로그램이 쥐고 있으면 조용히 멈추지 않고 알린다
  *   D4 호스트가 갑자기 나가면 남은 인스턴스가 이어받고 다시 한 명으로 수렴한다
  *
  * 실행: node test/discovery-test.js
  */
 
 const path = require('path');
+const net = require('net');
 const os = require('os');
 const dgram = require('dgram');
 const { spawn } = require('child_process');
@@ -180,6 +182,38 @@ async function main() {
     healed, healed ? '' : '굳었다 - 아무도 서버를 켜지 않는다');
 
   await addressFlapping();
+  await portBusy();
+}
+
+/**
+ * D9 게임 포트를 다른 프로그램이 쥐고 있으면.
+ *
+ * 예전 버전이 아직 켜져 있는 경우가 대표적이다. 이때 아무 말도 안 하면 화면은
+ * "참가자를 찾는 중..."에서 영영 멈추고, 사용자는 방화벽 문제인지 아무도 안 켠 건지
+ * 구분할 방법이 없다. 게다가 선출이 1초마다 도는 자리라 같은 사유가 로그에 계속 쌓였다.
+ */
+async function portBusy() {
+  const { createPeer } = require('../electron/peer');
+  const BUSY_PORT = PORT + 4;
+  const squatter = net.createServer(() => {});
+  await new Promise((r) => squatter.listen(BUSY_PORT, '0.0.0.0', r));
+
+  const notices = [];
+  const peer = createPeer({ port: BUSY_PORT, onNotice: (n) => notices.push(n) });
+  peer.start();
+  await until('포트 점유 알림', () => notices.length > 0, 20000);
+
+  check('D9 포트를 못 잡으면 화면에 알린다 (조용히 멈추지 않는다)',
+    notices.some((n) => n.kind === 'portBusy' && n.port === BUSY_PORT),
+    notices.map((n) => n.kind).join(',') || '알림 없음');
+
+  const before = notices.length;
+  await wait(6000); // 선출이 1초마다 도는 동안
+  check('D9 같은 사유를 반복해서 쌓지 않는다', notices.length === before, `${notices.length - before}회 더`);
+  check('D9 그동안 호스트라고 우기지 않는다', peer.isHosting() === false);
+
+  await peer.stop();
+  await new Promise((r) => squatter.close(r));
 }
 
 /**

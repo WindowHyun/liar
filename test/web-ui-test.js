@@ -374,7 +374,80 @@ async function main() {
     chatText.includes('줄 119'), `마지막 40자: ${chatText.replace(/\s+/g, ' ').trim().slice(-40)}`);
   check('X12 오래된 글은 밀려난다 (무한정 쌓이지 않는다)', !chatText.includes('줄 0 '));
 
+  // ── 예전 버전 서버에 붙었을 때 (롤아웃 중 섞이는 상황) ──
+  // v0.8.0 이하는 화면이 보내는 연결 확인(ping)을 모른다. 거절당한 것을 그대로 배너로
+  // 띄우면 20초마다 "잘못된 요청입니다"가 떠서 고장난 것처럼 보인다.
+  await oldServerCheck(browser);
+
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+}
+
+/**
+ * 예전 버전 서버를 흉내낸다. 정적 파일은 그대로 내려 주되, ping은 "알 수 없는 요청"으로
+ * 거절한다(v0.8.0 이하가 그렇게 동작한다).
+ */
+async function oldServerCheck(browser) {
+  const OLD_PORT = PORT + 3;
+  const PUBLIC_DIR = path.join(ROOT, 'web', 'public');
+  const fs = require('fs');
+  const { WebSocketServer } = require('ws');
+  const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png' };
+
+  let rejected = 0;
+  const srv = http.createServer((req, res) => {
+    const name = (req.url || '/').split('?')[0] === '/' ? 'index.html' : path.basename(req.url);
+    fs.readFile(path.join(PUBLIC_DIR, name), (err, data) => {
+      if (err) { res.writeHead(404); res.end('없음'); return; }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(name)] || 'application/octet-stream' });
+      res.end(data);
+    });
+  });
+  await new Promise((r) => srv.listen(OLD_PORT, '127.0.0.1', r));
+  const wss = new WebSocketServer({ server: srv });
+  wss.on('connection', (sock) => {
+    sock.on('message', (raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'ping') {                       // 예전 버전은 이걸 모른다
+        rejected += 1;
+        sock.send(JSON.stringify({ type: 'error', message: '잘못된 요청입니다.' }));
+        return;
+      }
+      if (m.type === 'join') {
+        sock.send(JSON.stringify({ type: 'welcome', playerId: 'old1', token: 'tok' }));
+        sock.send(JSON.stringify({
+          type: 'state', phase: 'lobby', serverTime: Date.now(), minPlayers: 2,
+          you: { id: 'old1', nickname: '옛날이', inRound: false },
+          players: [{ id: 'old1', nickname: '옛날이', connected: true, inRound: false }],
+          round: null, result: null, record: { rounds: 0, liarWins: 0, citizenWins: 0 },
+          chat: [], canStart: false,
+        }));
+      }
+    });
+  });
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const banners = [];
+  await page.goto(`http://127.0.0.1:${OLD_PORT}`);
+  await page.fill('#nickname-input', '옛날이');
+  await page.click('#join-btn');
+  await page.waitForSelector('#screen-game:not(.hidden)', { timeout: 5000 });
+
+  // 확인 요청 주기(20초)를 실제로 기다리는 대신, 화면이 쓰는 것과 같은 방식으로 한 번 보낸다.
+  await page.evaluate(() => { window.pingSentAt = Date.now(); window.ws.send(JSON.stringify({ type: 'ping' })); });
+  await wait(600);
+  const shown = await page.isVisible('#banner');
+  banners.push(shown);
+  check('X13 예전 버전 서버가 확인 요청을 거절해도 오류 배너를 띄우지 않는다',
+    !shown, shown ? await page.textContent('#banner') : '');
+  check('X13 대신 예전 버전이라고 알려 준다',
+    (await page.textContent('#conn-hint')).includes('예전 버전'),
+    (await page.textContent('#conn-hint')).trim() || '(비어 있음)');
+  check('X13 거절을 실제로 받았다 (검사가 겉돌지 않았다)', rejected > 0, `${rejected}회`);
+
+  await ctx.close();
+  wss.close();
+  await new Promise((r) => srv.close(r));
 }
 
 main()

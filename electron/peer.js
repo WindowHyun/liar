@@ -42,6 +42,7 @@ function createPeer(options) {
   const port = opts.port || DEFAULT_PORT;
   const onStatus = opts.onStatus || (() => {});
   const onVersionMismatch = opts.onVersionMismatch || (() => {});
+  const onNotice = opts.onNotice || (() => {});
 
   const nodeId = opts.nodeId || crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
@@ -52,6 +53,7 @@ function createPeer(options) {
   let discovery = null;
   let electionTimer = null;
   let lastStatusKey = null;
+  let portBusyReported = false; // 같은 사유를 1초마다 로그에 쌓지 않기 위해
 
   function aliveNodes() {
     return [
@@ -107,9 +109,19 @@ function createPeer(options) {
       } catch (err) {
         gameServer = null;
         // 방금까지 호스트였던 인스턴스가 같은 PC에 있으면 포트가 잠깐 안 놓일 수 있다.
-        warn(`[호스트 전환] 게임 서버 시작 실패(${attempt}/${SERVER_MAX_TRIES}): ${err.code || err.message}`);
+        // 다만 다른 프로그램이 계속 쥐고 있으면 이 경로를 1초마다 영원히 지나가므로,
+        // 같은 사유를 반복해서 쌓지 않는다.
+        if (!portBusyReported) {
+          warn(`[호스트 전환] 게임 서버 시작 실패(${attempt}/${SERVER_MAX_TRIES}): ${err.code || err.message}`);
+        }
         if (attempt === SERVER_MAX_TRIES) {
-          error('[호스트 전환] 게임 서버를 켜지 못했습니다. 다른 참가자가 호스트를 맡습니다.');
+          if (!portBusyReported) {
+            portBusyReported = true;
+            error(`[호스트 전환] ${port}번 포트를 쓸 수 없어 게임 서버를 켜지 못했습니다.`);
+            // 여기서 아무 말도 안 하면 화면은 "참가자를 찾는 중..."에서 영영 멈춘다.
+            // 사용자는 방화벽 문제인지 아무도 안 켰는지 구분할 방법이 없다.
+            onNotice({ kind: 'portBusy', port, code: err.code || null });
+          }
           return false;
         }
         await new Promise((r) => setTimeout(r, SERVER_RETRY_MS));
@@ -142,6 +154,7 @@ function createPeer(options) {
       try {
         log(`[호스트 전환] 내가 호스트가 됩니다 (${nodeId})`);
         hosting = await startServerWithRetry();
+        if (hosting) portBusyReported = false; // 다음에 또 막히면 그때 다시 알린다
       } finally {
         switching = false;
       }

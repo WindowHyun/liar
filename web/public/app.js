@@ -39,6 +39,11 @@ var PING_MS = 20000;       // 살아 있는지 물어보는 주기
 var SILENCE_MS = 50000;    // 이만큼 아무 소식이 없으면 죽은 연결로 보고 다시 붙는다
 var pingTimer = null;
 var lastSeenAt = 0;
+// 예전 버전(v0.8.0 이하) 서버는 이 확인 요청을 모른다. 그런 서버에 붙으면 20초마다
+// "잘못된 요청입니다" 배너가 떠서 고장난 것처럼 보인다. 한 번 거절당하면 그만 보낸다.
+var pingSupported = true;
+var pongSeen = false;
+var pingSentAt = 0;
 var liveSignature = '';    // 진행 블록을 필요할 때만 다시 그리기 위한 지문
 
 function $(id) { return document.getElementById(id); }
@@ -123,14 +128,25 @@ function connect() {
     lastSeenAt = Date.now(); // 무엇이 오든 연결이 살아 있다는 뜻이다
     var msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    if (msg.type === 'pong') return;
+    if (msg.type === 'pong') { pongSeen = true; return; }
     if (msg.type === 'welcome') {
       myId = msg.playerId;
       writeStored(TOKEN_KEY, msg.token);
       writeStored(NAME_KEY, myNickname);
       return;
     }
-    if (msg.type === 'error') { showBanner('warn', msg.message, 5000); return; }
+    if (msg.type === 'error') {
+      // 방금 보낸 확인 요청이 거절당한 것이라면, 이 서버는 예전 버전이다.
+      // 사용자에게는 아무 의미 없는 오류라 띄우지 않고, 확인 요청만 그만 보낸다.
+      if (!pongSeen && pingSentAt && Date.now() - pingSentAt < 3000) {
+        pingSupported = false;
+        stopWatchdog();
+        $('conn-hint').textContent = '상대가 예전 버전입니다. 모두 같은 파일로 받아주세요.';
+        return;
+      }
+      showBanner('warn', msg.message, 5000);
+      return;
+    }
     if (msg.type === 'state') {
       serverOffset = msg.serverTime - Date.now();
       render(msg);
@@ -157,14 +173,17 @@ function connect() {
  */
 function startWatchdog() {
   stopWatchdog();
+  if (!pingSupported) return; // 예전 버전 서버 - 물어봐야 거절만 당한다
   lastSeenAt = Date.now();
   pingTimer = setInterval(function () {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (Date.now() - lastSeenAt > SILENCE_MS) {
+    // 조용하다고 곧바로 끊지 않는다. 확인 요청에 답이 오는 서버일 때만 판단할 수 있다.
+    if (pongSeen && Date.now() - lastSeenAt > SILENCE_MS) {
       $('conn-hint').textContent = '연결이 끊어진 것 같아 다시 붙는 중...';
       try { ws.close(); } catch (e) { /* 이미 닫힘 */ } // onclose가 재연결을 맡는다
       return;
     }
+    pingSentAt = Date.now();
     try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) { /* 곧 onclose가 온다 */ }
   }, PING_MS);
 }

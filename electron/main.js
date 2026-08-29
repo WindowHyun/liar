@@ -125,6 +125,14 @@ app.whenReady().then(async () => {
   peer = createPeer({
     port: PORT,
     onStatus: sendStatus,
+    onNotice: (n) => {
+      if (n.kind !== 'portBusy') return;
+      sendNotice({
+        kind: 'portBusy',
+        text: `${n.port}번 포트를 다른 프로그램이 쓰고 있어 게임을 열 수 없습니다.`
+          + ' 예전 버전이 아직 켜져 있지 않은지 확인하고, 모두 같은 파일로 다시 받아주세요.',
+      });
+    },
     onVersionMismatch: (d) => sendNotice({
       kind: 'versionMismatch',
       text: `다른 참가자와 프로그램 버전이 다릅니다(상대 v${d.peerVersion} / 나 v${d.myVersion}). 모두 같은 파일로 다시 받아주세요.`,
