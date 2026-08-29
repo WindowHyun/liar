@@ -8,6 +8,7 @@ const path = require('path');
 const suites = [
   'web-room-test.js', 'web-ui-test.js',    // 게임 규칙과 화면 (웹·Electron 공용)
   'play-test.js',                          // 5명이 한 판을 끝까지 (사람이 하듯)
+  'restart-test.js',                       // 판이 끝나거나 끊긴 뒤 다시 시작되는지
   'fuzz-test.js',                          // 무작위 조작으로 규칙 두들기기
   'connection-test.js',                    // 연결 유지 / 죽은 연결 정리
   'discovery-test.js', 'bridge-test.js',   // Electron - 자동 발견, 호스트 인계
