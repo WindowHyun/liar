@@ -80,7 +80,7 @@ async function main() {
   await page.fill('#nickname-input', '철수');
   await page.click('#join-btn');
   await page.evaluate(`window.__setServer('ws://127.0.0.1:${PORT_A}')`);
-  await page.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 1, { timeout: 6000 });
+  await page.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 1, null, { timeout: 6000 });
   check('B2 브리지가 알려 준 주소로 붙는다',
     (await page.textContent('#participant-list')).includes('철수') && serverA.playerCount() === 1);
 
@@ -93,7 +93,7 @@ async function main() {
 
   const moved = await page.waitForFunction(
     () => document.querySelectorAll('#participant-list li').length === 1,
-    { timeout: 8000 },
+    null, { timeout: 8000 },
   ).then(() => true).catch(() => false);
 
   check('B3 호스트가 바뀌면 새 주소로 알아서 다시 붙는다',
@@ -104,10 +104,81 @@ async function main() {
   // 4. 다시 붙은 서버에서 정상적으로 게임을 이어갈 수 있다
   await page.fill('#chat-input', '인계 후에도 됩니다');
   await page.press('#chat-input', 'Enter');
-  await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('인계 후에도 됩니다'), { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('인계 후에도 됩니다'), null, { timeout: 5000 });
   check('B4 인계된 서버에서 대화가 정상 동작한다', true);
 
   check('B5 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+  await roundInProgressHandover();
+}
+
+/**
+ * B6 판이 진행 중일 때 호스트가 바뀌면.
+ *
+ * 위 B1~B5는 로비에서 한 명일 때만 본다. 실제로 문제가 되는 건 "게임 중에 호스트가
+ * 나갔을 때"다. 방 상태는 호스트 PC 메모리에만 있으므로 인계되면 판이 통째로 사라진다.
+ * 그 자체는 구조상 어쩔 수 없고, 확인할 것은 이것이다.
+ *   - 판이 사라졌다고 화면이 알려 주는가 (아무 말 없이 로비로 돌아가면 버그로 보인다)
+ *   - 두 사람 다 새 호스트로 옮겨 붙는가
+ *   - 곧바로 새 판을 시작할 수 있는가
+ */
+async function roundInProgressHandover() {
+  const PORT_C = 4183;
+  const PORT_D = 4184;
+  let hostC = createGameServer({ port: PORT_C });
+  await hostC.start();
+
+  // 창마다 저장소를 나눠야 두 참가자가 된다 (같은 컨텍스트면 토큰을 공유한다)
+  const pages = [];
+  for (const name of ['철수', '영희']) {
+    const ctx = await browser.newContext();
+    const pg = await ctx.newPage();
+    await pg.addInitScript(BRIDGE);
+    await pg.goto(`http://127.0.0.1:${PORT_C}`);
+    await pg.fill('#nickname-input', name);
+    await pg.click('#join-btn');
+    await pg.evaluate(`window.__setServer('ws://127.0.0.1:${PORT_C}')`);
+    pages.push({ name, page: pg, ctx });
+  }
+  await pages[0].page.waitForFunction(
+    () => document.querySelectorAll('#participant-list li').length === 2, null, { timeout: 8000 });
+
+  await pages[0].page.click('#start-btn');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 8000 })));
+  check('B6 인계 전에 판이 진행 중이다',
+    (await pages[0].page.textContent('#live-block')).includes('설명'));
+
+  // 호스트가 갑자기 나가고 다른 PC가 이어받는다
+  const hostD = createGameServer({ port: PORT_D });
+  await hostD.start();
+  await hostC.stop();
+  hostC = null;
+  for (const p of pages) await p.page.evaluate(`window.__setServer('ws://127.0.0.1:${PORT_D}')`);
+
+  const moved = await pages[0].page.waitForFunction(
+    () => document.querySelectorAll('#participant-list li').length === 2,
+    null, { timeout: 10000 },
+  ).then(() => true).catch(() => false);
+  check('B6 두 사람 다 새 호스트로 옮겨 붙는다',
+    moved && hostD.playerCount() === 2, `새 호스트 접속자 ${hostD.playerCount()}명`);
+
+  check('B6 판이 사라졌다고 화면이 알려 준다',
+    (await pages[0].page.textContent('#banner')).includes('이어받았습니다'),
+    (await pages[0].page.textContent('#banner')).trim().slice(0, 40) || '(배너 없음)');
+  check('B6 새 호스트에서는 로비로 돌아와 있다',
+    await pages[0].page.isVisible('#start-btn') && await pages[0].page.isHidden('#result-panel'));
+  check('B6 곧바로 새 판을 시작할 수 있다', !(await pages[0].page.isDisabled('#start-btn')));
+
+  await pages[0].page.click('#start-btn');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 8000 })));
+  const cards = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
+  check('B6 새 판이 정상적으로 굴러간다',
+    cards.filter((c) => c.includes('당신은 Oliveyoung입니다')).length === 1
+    && (await pages[0].page.textContent('#live-block .round-badge')).trim() === '1차',
+    cards.map((c) => c.slice(0, 12)).join(' / '));
+
+  for (const p of pages) await p.ctx.close();
+  await hostD.stop();
 }
 
 main()
