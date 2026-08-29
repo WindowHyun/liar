@@ -11,14 +11,18 @@
  *   D5 나중에 들어온 인스턴스는 진행 중인 호스트를 뺏지 않는다
  *   D6 호스트의 알림이 잠깐 끊겨도 호스트를 뺏지 않는다 (판이 날아가지 않는다)
  *   D7 호스트의 게임 서버가 죽으면 호스트 자리를 내려놓고 다시 정한다
+ *   D8 호스트가 랜선+와이파이로 동시에 붙어 있어도 붙을 주소가 흔들리지 않는다
  *   D4 호스트가 갑자기 나가면 남은 인스턴스가 이어받고 다시 한 명으로 수렴한다
  *
  * 실행: node test/discovery-test.js
  */
 
 const path = require('path');
+const os = require('os');
+const dgram = require('dgram');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const { createDiscovery, DISCOVERY_VERSION, ADDRESS_STICKY_MS } = require('../electron/discovery');
 
 // 실제 앱(55500)과 겹치면 돌고 있는 인스턴스를 4번째 참가자로 잡아 버린다.
 // 테스트는 전용 포트를 쓴다.
@@ -174,6 +178,72 @@ async function main() {
   const healed = await until('다시 붙을 수 있게 됨', () => canConnect(SOLO_PORT), 20000);
   check('D7 [H3] 게임 서버가 죽어도 스스로 다시 켠다 (전원이 굳지 않는다)',
     healed, healed ? '' : '굳었다 - 아무도 서버를 켜지 않는다');
+
+  await addressFlapping();
+}
+
+/**
+ * D8 한 PC가 랜선과 와이파이로 같은 망에 동시에 붙어 있는 상황.
+ *
+ * 도킹한 노트북에서 아주 흔하다. 그러면 같은 인스턴스의 알림이 두 주소에서 번갈아
+ * 도착하는데, 올 때마다 주소를 갈아치우면 붙을 주소가 2초마다 바뀌고 화면은 그때마다
+ * 연결을 끊고 다시 붙는다. 실제로 "엄청 튕긴다"는 신고가 있었다.
+ *
+ * 프로세스를 띄우는 대신 알림 패킷을 직접 만들어 보낸다. 이 컨테이너에는 어댑터가
+ * 하나뿐이라 진짜 이중 연결을 만들 수 없기 때문이다.
+ */
+async function addressFlapping() {
+  const PORT_F = PORT + 2;
+  const local = [];
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const info of entries || []) if (info.family === 'IPv4' && !info.internal) local.push(info.address);
+  }
+  const first = '127.0.0.1';
+  const second = local[0];
+  if (!second) { check('D8 (주소가 하나뿐이라 건너뜀)', true); return; }
+
+  const changes = [];
+  const disc = createDiscovery({
+    port: PORT_F,
+    nodeId: 'watcher',
+    buildAnnounce: () => ({ isHost: false }),
+    onChange: () => {
+      const peer = disc.peers()[0];
+      changes.push(peer ? peer.address : '없음');
+    },
+  });
+  disc.start();
+
+  const announceFrom = (src) => new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    sock.bind(0, src, () => {
+      const msg = Buffer.from(JSON.stringify({ v: DISCOVERY_VERSION, nodeId: 'host-pc', isHost: true }));
+      sock.send(msg, PORT_F, '127.0.0.1', () => { sock.close(); resolve(); });
+    });
+  });
+
+  await wait(300);
+  for (let i = 0; i < 5; i += 1) {          // 두 어댑터가 번갈아 알린다
+    await announceFrom(first); await wait(120);
+    await announceFrom(second); await wait(120);
+  }
+  await wait(300);
+
+  check('D8 붙을 주소가 흔들리지 않는다 (튕김의 원인)',
+    new Set(changes).size <= 1, `주소 변경 ${changes.length}회: ${changes.join(' → ')}`);
+  check('D8 그래도 호스트는 정상적으로 잡힌다',
+    disc.peers().length === 1 && disc.peers()[0].isHost === true);
+
+  // 쓰던 주소가 조용해지면 진짜 바뀐 것으로 보고 따라가야 한다
+  changes.length = 0;
+  await wait(ADDRESS_STICKY_MS + 500);
+  await announceFrom(second);
+  await wait(300);
+  check('D8 쓰던 주소가 조용해지면 새 주소로 따라간다',
+    disc.peers()[0] && disc.peers()[0].address === second,
+    disc.peers()[0] ? disc.peers()[0].address : '없음');
+
+  disc.stop();
 }
 
 main()

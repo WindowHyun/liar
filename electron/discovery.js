@@ -38,6 +38,12 @@ const PEER_TIMEOUT_MS = 7000;  // 알림 3~4번을 연속으로 놓치면 나간
 // 모두의 연결이 끊기면서 진행 중이던 판이 통째로 날아간다. 사내 Wi-Fi의 AP는
 // 브로드캐스트 프레임을 곧잘 버리기 때문에 몇 번 연속으로 놓치는 일이 드물지 않다.
 const HOST_TIMEOUT_MS = 21000;
+// [F1] 한 PC가 랜선과 와이파이로 같은 망에 동시에 붙어 있으면(도킹한 노트북에서 흔하다)
+// 같은 인스턴스의 알림이 두 주소에서 번갈아 도착한다. 올 때마다 주소를 갈아치우면
+// 붙을 주소가 2초마다 바뀌고, 화면은 그때마다 연결을 끊고 다시 붙는다 - 계속 튕긴다.
+// 쓰던 주소가 아직 살아 있으면 그대로 둔다. 이 시간만큼 그 주소가 조용하면 그때 갈아탄다
+// (공유기가 IP를 새로 준 경우처럼 진짜로 바뀐 상황).
+const ADDRESS_STICKY_MS = 6000;
 
 function getLocalIPv4Interfaces() {
   const result = [];
@@ -184,15 +190,27 @@ function createDiscovery(options) {
         return;
       }
 
+      const now = Date.now();
       const before = peers.get(msg.nodeId);
-      peers.set(msg.nodeId, {
-        nodeId: msg.nodeId,
-        address: rinfo.address,
-        isHost: msg.isHost === true,
-        lastSeen: Date.now(),
-      });
-      if (!before) log(`[발견] 참가자를 찾았습니다: ${msg.nodeId} (${rinfo.address})`);
-      if (!before || before.isHost !== (msg.isHost === true) || before.address !== rinfo.address) onChange();
+      const isHost = msg.isHost === true;
+
+      // [F1] 쓰던 주소가 계속 살아 있으면 다른 주소에서 온 알림이 있어도 갈아타지 않는다.
+      let address = rinfo.address;
+      let addressSeen = now;
+      if (before) {
+        if (rinfo.address === before.address) {
+          address = before.address; // 쓰던 주소에서 왔다 - 살아 있다는 뜻
+        } else if (now - before.addressSeen <= ADDRESS_STICKY_MS) {
+          address = before.address;          // 아직 살아 있다. 그대로 간다
+          addressSeen = before.addressSeen;  // 이 알림은 다른 주소 것이므로 갱신하지 않는다
+        } else {
+          log(`[발견] ${msg.nodeId}의 주소가 바뀌었습니다: ${before.address} → ${rinfo.address}`);
+        }
+      }
+
+      peers.set(msg.nodeId, { nodeId: msg.nodeId, address, isHost, lastSeen: now, addressSeen });
+      if (!before) log(`[발견] 참가자를 찾았습니다: ${msg.nodeId} (${address})`);
+      if (!before || before.isHost !== isHost || before.address !== address) onChange();
     });
 
     sock.on('error', (err) => {
@@ -231,5 +249,5 @@ function createDiscovery(options) {
 
 module.exports = {
   createDiscovery, getLocalIPv4Interfaces, DISCOVERY_VERSION,
-  ANNOUNCE_MS, PEER_TIMEOUT_MS, HOST_TIMEOUT_MS,
+  ANNOUNCE_MS, PEER_TIMEOUT_MS, HOST_TIMEOUT_MS, ADDRESS_STICKY_MS,
 };
