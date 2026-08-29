@@ -161,7 +161,7 @@ async function finishRound(ps, starter) {
   check('C2 나간 사람은 목록에서 즉시 빠진다',
     (await rest[0].page.textContent('#member-count')).trim() === '4');
   check('C2 남은 사람은 대화할 수 있다', !(await rest[0].page.isDisabled('#chat-input')));
-  await rest[0].page.screenshot({ path: `${OUT}/c2-liar-left.png` });
+  if (OUT) await rest[0].page.screenshot({ path: `${OUT}/c2-liar-left.png` });
 
   log(`  ${liar2.name}님이 다시 들어옵니다`);
   await liar2.page.fill('#nickname-input', liar2.name);
