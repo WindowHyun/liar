@@ -9,6 +9,7 @@
     "electron": "electron .",
     "web": "node web/server.js",
     "test": "node test/run-all.js",
+    "play": "node test/play-test.js",
     "dist": "electron-builder --win --publish never",
     "lint": "eslint . --ext .js"
   },

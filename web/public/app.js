@@ -904,6 +904,12 @@ function render(s) {
   // (예전에 "방이 리셋될 때까지 채팅이 안 된다"는 신고가 이런 모양이었다.)
   applyComposer(s);
 
+  // 결과 카드가 뜨면 대화 영역이 그만큼 줄어든다. 대화를 다 그린 뒤에 카드가 붙기 때문에,
+  // 그리기 직전에 맨 아래를 보고 있었다면 다 그린 다음 한 번 더 내려야 한다.
+  // 안 그러면 방금 나온 "○○님이 지목되었습니다"와 결과 줄이 화면 밖으로 밀려서,
+  // 정작 읽어야 할 순간에 손으로 스크롤해야 한다.
+  var wasAtBottom = isChatAtBottom();
+
   try {
     renderParticipants(s);
     renderTally(s);
@@ -927,6 +933,8 @@ function render(s) {
   if (s.phase !== 'lobby' && s.phase !== 'result' && s.you && !s.you.inRound) {
     showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.');
   }
+
+  if (wasAtBottom) scrollChatToBottom();
 
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   if (s.phase !== 'lobby' && s.phase !== 'result') {
