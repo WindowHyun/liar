@@ -9,6 +9,7 @@
  *   D2 호스트는 정확히 한 명이고, 모두가 같은 사람을 호스트로 본다
  *   D3 모두가 같은 게임 서버 주소를 가리킨다 = 자동으로 한 방에 모인다
  *   D5 나중에 들어온 인스턴스는 진행 중인 호스트를 뺏지 않는다
+ *   D6 호스트의 알림이 잠깐 끊겨도 호스트를 뺏지 않는다 (판이 날아가지 않는다)
  *   D4 호스트가 갑자기 나가면 남은 인스턴스가 이어받고 다시 한 명으로 수렴한다
  *
  * 실행: node test/discovery-test.js
@@ -97,6 +98,26 @@ async function main() {
   check('D5 나중에 들어와도 진행 중인 호스트를 뺏지 않는다',
     joined && d.status.hostId === beforeHost && hostPeer.status.isHost === true,
     `기존=${beforeHost} / D가 보는 호스트=${d.status ? d.status.hostId : '?'}`);
+
+  // D6 호스트의 알림이 잠깐 끊겨도 호스트를 뺏지 않는다.
+  //
+  // 사내 Wi-Fi의 AP는 브로드캐스트 프레임을 곧잘 버린다. 알림 몇 번을 연속으로 놓쳤다고
+  // 다른 PC가 호스트를 넘겨받아 버리면, 게임 서버가 새로 켜지면서 전원의 연결이 끊기고
+  // 진행 중이던 판이 통째로 날아간다. 실제로 "게임 중에 갑자기 끊긴다"는 신고가 있었다.
+  // SIGSTOP으로 호스트 프로세스를 얼려서 알림만 끊긴 상황을 그대로 만든다.
+  const watchers = [a, b, c, d].filter((p) => p !== hostPeer);
+  hostPeer.child.kill('SIGSTOP');
+  await wait(12000); // 보통 참가자 기준(7초)은 훌쩍 넘고, 호스트 기준(21초)에는 못 미친다
+  const kept = watchers.every((p) => p.status && p.status.hostId === beforeHost);
+  hostPeer.child.kill('SIGCONT');
+  check('D6 호스트 알림이 12초 끊겨도 호스트를 뺏지 않는다 (판이 날아가지 않는다)',
+    kept, hostsOf(watchers).join(' '));
+
+  await wait(4000); // 얼렸다 푼 뒤 서로를 다시 찾을 틈을 준다
+  check('D6 알림이 돌아오면 그대로 이어간다',
+    watchers.every((p) => p.status && p.status.hostId === beforeHost)
+    && hostPeer.status.isHost === true,
+    hostsOf(watchers).join(' '));
 
   const survivors = [a, b, c, d].filter((p) => p !== hostPeer);
   hostPeer.child.kill('SIGKILL'); // 정상 종료가 아니라 갑자기 죽은 상황

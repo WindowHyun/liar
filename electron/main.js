@@ -139,3 +139,8 @@ process.on('uncaughtException', (err) => {
   // 창이 없는 빌드에서는 콘솔이 안 보이므로 로그 파일에 반드시 남긴다.
   error(`[치명적 오류] ${err.stack || err.message}`);
 });
+
+// 여기까지 올라온 실패도 그냥 삼키면 원인을 영영 못 찾는다. 앱은 살려 두되 남긴다.
+process.on('unhandledRejection', (reason) => {
+  error(`[처리되지 않은 실패] ${reason && reason.stack ? reason.stack : reason}`);
+});

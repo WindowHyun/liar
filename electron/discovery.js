@@ -33,6 +33,11 @@ const DISCOVERY_VERSION = 1;
 
 const ANNOUNCE_MS = 2000;      // 알림 주기
 const PEER_TIMEOUT_MS = 7000;  // 알림 3~4번을 연속으로 놓치면 나간 것으로 본다
+// 호스트는 훨씬 오래 기다린다. 보통 참가자가 잠깐 사라지는 것은 아무 대가가 없지만
+// (돌아오면 그만), 호스트가 사라진 것으로 판단하면 다른 PC가 게임 서버를 새로 켜고
+// 모두의 연결이 끊기면서 진행 중이던 판이 통째로 날아간다. 사내 Wi-Fi의 AP는
+// 브로드캐스트 프레임을 곧잘 버리기 때문에 몇 번 연속으로 놓치는 일이 드물지 않다.
+const HOST_TIMEOUT_MS = 21000;
 
 function getLocalIPv4Interfaces() {
   const result = [];
@@ -144,9 +149,10 @@ function createDiscovery(options) {
     const now = Date.now();
     let changed = false;
     for (const [id, peer] of peers) {
-      if (now - peer.lastSeen > PEER_TIMEOUT_MS) {
+      const limit = peer.isHost ? HOST_TIMEOUT_MS : PEER_TIMEOUT_MS;
+      if (now - peer.lastSeen > limit) {
         peers.delete(id);
-        log(`[발견] 참가자가 나갔습니다: ${id}`);
+        log(`[발견] ${peer.isHost ? '호스트' : '참가자'}가 나갔습니다: ${id}`);
         changed = true;
       }
     }
@@ -223,4 +229,7 @@ function createDiscovery(options) {
   };
 }
 
-module.exports = { createDiscovery, getLocalIPv4Interfaces, DISCOVERY_VERSION, ANNOUNCE_MS, PEER_TIMEOUT_MS };
+module.exports = {
+  createDiscovery, getLocalIPv4Interfaces, DISCOVERY_VERSION,
+  ANNOUNCE_MS, PEER_TIMEOUT_MS, HOST_TIMEOUT_MS,
+};

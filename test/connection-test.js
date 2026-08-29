@@ -99,9 +99,32 @@ async function main() {
   try { stillAlive = await expect(a, (m) => m.type === 'pong'); } catch { /* 아래에서 걸린다 */ }
   check('C4 다른 사람은 계속 게임할 수 있다', !!stillAlive);
 
+  // ── C5: 한 연결이 참가를 두 번 보내도 유령이 남지 않는다 ──
+  // 앞서 잡았던 자리가 "접속 중"인 채로 남으면 인원수와 시작 조건이 어긋난다.
+  let lastState = null;
+  a.on('message', (raw) => {
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.type === 'state') lastState = m;
+  });
+
+  const d = await open();
+  d.send(JSON.stringify({ type: 'join', nickname: '지현' }));
+  const first = await expect(d, (m) => m.type === 'welcome');
+  d.send(JSON.stringify({ type: 'join', nickname: '지현2' }));
+  const second = await expect(d, (m) => m.type === 'welcome');
+  await wait(300);
+  check('C5 두 번째 참가는 새 자리로 들어간다', first.playerId !== second.playerId);
+
+  const connectedNow = lastState ? lastState.players.filter((p) => p.connected) : [];
+  // 붙어 있는 사람: 철수(a), 민수(c), 지현2(d)  → 지현(첫 자리)은 접속 중이면 안 된다
+  check('C5 앞 자리가 접속 중인 채로 남지 않는다',
+    connectedNow.length === 3 && !connectedNow.some((p) => p.id === first.playerId),
+    connectedNow.map((p) => p.nickname).join(',') || '(상태 못 받음)');
+
   try { a.close(); } catch { /* 무시 */ }
   try { b.terminate(); } catch { /* 무시 */ }
   try { c.close(); } catch { /* 무시 */ }
+  try { d.close(); } catch { /* 무시 */ }
   await server.stop();
 }
 

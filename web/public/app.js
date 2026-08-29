@@ -33,7 +33,7 @@ var reconnectDelay = 500;
 var tickTimer = null;
 var everConnected = false; // [E-1] 첫 접속과 호스트 인계를 구분하기 위해
 var serverOffset = 0;      // 서버 시계 - 내 시계. 남은 시간을 정확히 세기 위해.
-var lastChatCount = -1;
+var lastChatKey = '';       // 대화를 다시 그릴지 판단하는 지문
 // [E-3] 연결 감시. 사내망에서 조용한 연결이 끊기거나, 끊긴 줄도 모르고 있는 것을 막는다.
 var PING_MS = 20000;       // 살아 있는지 물어보는 주기
 var SILENCE_MS = 50000;    // 이만큼 아무 소식이 없으면 죽은 연결로 보고 다시 붙는다
@@ -218,7 +218,7 @@ function leaveRoom() {
   myId = null;
   myNickname = '';
   state = null;
-  lastChatCount = -1;
+  lastChatKey = '';
   liveSignature = '';
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   $('chat-messages').innerHTML = '';
@@ -404,9 +404,13 @@ function systemLine(m) {
 }
 
 function renderChat(s) {
-  if (s.chat.length === lastChatCount) return;
+  // 길이로만 판단하면 안 된다. 대화가 상한(100줄)에 닿은 뒤로는 한 줄 밀어내고 한 줄
+  // 넣느라 길이가 계속 100이라, 그 시점부터 새 글이 화면에 안 붙는다.
+  // 서버가 붙여 주는 글 번호를 같이 본다.
+  var key = s.chat.length + ':' + (s.chat.length ? s.chat[s.chat.length - 1].seq : 0);
+  if (key === lastChatKey) return;
   var wasAtBottom = isChatAtBottom();
-  lastChatCount = s.chat.length;
+  lastChatKey = key;
 
   var box = $('chat-messages');
   box.innerHTML = '';
@@ -896,12 +900,21 @@ function render(s) {
   state = s;
   if (s.you) myId = s.you.id;
 
-  renderParticipants(s);
-  renderTally(s);
-  renderRoleCard(s);
-  renderChat(s);
-  renderLive(s);
-  renderResult(s);
+  // 입력창부터 정한다. 아래에서 그리다가 문제가 생겨도 대화까지 막히면 안 된다.
+  // (예전에 "방이 리셋될 때까지 채팅이 안 된다"는 신고가 이런 모양이었다.)
+  applyComposer(s);
+
+  try {
+    renderParticipants(s);
+    renderTally(s);
+    renderRoleCard(s);
+    renderChat(s);
+    renderLive(s);
+    renderResult(s);
+  } catch (err) {
+    // 조용히 삼키지 않는다. 화면은 계속 쓸 수 있게 두되, 원인은 남긴다.
+    console.error('화면을 그리는 중 문제가 생겼습니다:', err);
+  }
 
   var lobbyish = s.phase === 'lobby' || s.phase === 'result';
   $('start-btn').disabled = !s.canStart;
@@ -910,8 +923,6 @@ function render(s) {
   // 투표 제안은 자유 대화 때만. 설명이 끝나기 전에는 누를 수 없다.
   $('vote-btn').disabled = !(s.phase === 'free' && s.you && s.you.inRound);
   $('vote-btn').title = s.phase === 'turn' ? '설명이 끝나면 투표를 제안할 수 있습니다' : '투표 제안';
-
-  applyComposer(s);
 
   if (s.phase !== 'lobby' && s.phase !== 'result' && s.you && !s.you.inRound) {
     showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.');

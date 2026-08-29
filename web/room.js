@@ -55,6 +55,10 @@ function createRoom(options) {
 
   const players = new Map(); // playerId -> { id, token, nickname, connected, joinedAt }
   const chat = [];
+  // 대화마다 붙는 번호. 화면이 "새 글이 있는가"를 판단하는 데 쓴다.
+  // 길이로만 판단하면 상한(CHAT_MAX)에 닿은 뒤로는 밀어내고 넣느라 길이가 그대로여서,
+  // 100줄이 넘어가는 순간부터 대화가 화면에서 멈춰 버린다.
+  let chatSeq = 0;
   const recentWords = [];
   // [S-3] 몇 판 했는지, 라이어와 시민이 각각 몇 번 이겼는지. 방이 살아 있는 동안 쌓인다.
   // (개표 함수 tally()와 헷갈리지 않게 record로 둔다)
@@ -115,13 +119,12 @@ function createRoom(options) {
     round = null;
     result = null;
     phase = 'lobby';
-    chat.push({
+    pushChat({
       kind: 'system', code: 'abandoned', remaining, at: now(),
       text: remaining === 0
         ? '참가자가 모두 나가 라운드가 취소되었습니다.'
         : '혼자 남아 라운드가 취소되었습니다.',
     });
-    trimChat();
     return true;
   }
 
@@ -292,8 +295,7 @@ function createRoom(options) {
       seats: new Map(roster.map((p) => [p.token, { id: p.id, nickname: p.nickname }])),
     };
     phase = 'turn';
-    chat.push({ kind: 'system', code: 'roundStart', text: '게임이 시작되었습니다.', at: now() });
-    trimChat();
+    pushChat({ kind: 'system', code: 'roundStart', text: '게임이 시작되었습니다.', at: now() });
     beginTurn();
     return null;
   }
@@ -327,9 +329,8 @@ function createRoom(options) {
     round.speakOrder = shuffle(round.roster.map((r) => r.id));
     round.speakIndex = 0;
     round.spoken = new Set();
-    chat.push({ kind: 'system', code: 'speakRoundStart', at: now(), speakRound: round.speakRound,
+    pushChat({ kind: 'system', code: 'speakRoundStart', at: now(), speakRound: round.speakRound,
       text: `${round.speakRound}차 설명을 시작합니다.` });
-    trimChat();
     beginTurn();
   }
 
@@ -349,9 +350,8 @@ function createRoom(options) {
     phaseTimer = setTimer(() => {
       phaseTimer = null;
       if (phase !== 'turn') return;
-      chat.push({ kind: 'system', code: 'turnSkipped', who: nameOf(currentSpeakerId()), at: now(),
+      pushChat({ kind: 'system', code: 'turnSkipped', who: nameOf(currentSpeakerId()), at: now(),
         text: `${nameOf(currentSpeakerId())}님이 설명 시간을 넘겼습니다.` });
-      trimChat();
       round.speakIndex += 1;
       beginTurn();
     }, SPEAK_MS);
@@ -364,9 +364,8 @@ function createRoom(options) {
     phase = 'free';
     round.speakEndsAt = null;
     round.freeEndsAt = now() + FREE_MS;
-    chat.push({ kind: 'system', code: 'freeStart', at: now(), speakRounds: TURN_ROUNDS,
+    pushChat({ kind: 'system', code: 'freeStart', at: now(), speakRounds: TURN_ROUNDS,
       text: `${TURN_ROUNDS}차 설명까지 끝났습니다. 이제 자유롭게 이야기하세요. (1분)` });
-    trimChat();
     // 1분이 다 되면 곧바로 투표로 간다. 이미 충분히 이야기했으니 찬반을 다시 묻지 않는다.
     phaseTimer = setTimer(() => {
       phaseTimer = null;
@@ -377,6 +376,13 @@ function createRoom(options) {
 
   function trimChat() {
     while (chat.length > CHAT_MAX) chat.shift();
+  }
+
+  /** 대화를 한 줄 남긴다. 번호는 여기서만 붙인다. */
+  function pushChat(entry) {
+    chatSeq += 1;
+    chat.push(Object.assign({ seq: chatSeq }, entry));
+    trimChat();
   }
 
   function say(playerId, text) {
@@ -396,8 +402,7 @@ function createRoom(options) {
     if (phase === 'turn' && playerId !== currentSpeakerId()) {
       return '지금은 ' + nameOf(currentSpeakerId()) + '님의 설명 차례입니다.';
     }
-    chat.push({ kind: 'chat', id: playerId, name: player.nickname, text: String(text).trim().slice(0, 300), at: now() });
-    trimChat();
+    pushChat({ kind: 'chat', id: playerId, name: player.nickname, text: String(text).trim().slice(0, 300), at: now() });
 
     // 설명을 마쳤으면 대화권을 다음 사람에게 넘긴다.
     if (phase === 'turn') {
@@ -426,8 +431,7 @@ function createRoom(options) {
       endsAt: now() + PROPOSAL_MS,
     };
     phase = 'proposal';
-    chat.push({ kind: 'system', code: 'proposalCalled', who: nameOf(playerId), text: `${nameOf(playerId)}님이 투표를 제안했습니다. 진행할까요?`, at: now() });
-    trimChat();
+    pushChat({ kind: 'system', code: 'proposalCalled', who: nameOf(playerId), text: `${nameOf(playerId)}님이 투표를 제안했습니다. 진행할까요?`, at: now() });
 
     clearPhaseTimer();
     phaseTimer = setTimer(() => { phaseTimer = null; settleProposal(true); }, PROPOSAL_MS);
@@ -492,8 +496,7 @@ function createRoom(options) {
       phaseTimer = null;
       if (phase === 'free') beginVoting();
     }, FREE_MS);
-    chat.push({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 대화를 이어가세요.`, at: now() });
-    trimChat();
+    pushChat({ kind: 'system', code: 'proposalRejected', agree, disagree, text: `투표 제안이 부결되었습니다. (찬성 ${agree} / 반대 ${disagree}) 대화를 이어가세요.`, at: now() });
     changed();
   }
 
@@ -507,12 +510,11 @@ function createRoom(options) {
     round.votes.clear();
     round.votingEndsAt = now() + VOTE_MS;
     phase = 'voting';
-    chat.push({ kind: 'system', code: 'votingStarted', byProposal, agree, disagree,
+    pushChat({ kind: 'system', code: 'votingStarted', byProposal, agree, disagree,
       text: byProposal
         ? `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`
         : '자유 대화 시간이 끝났습니다. 투표를 진행합니다.',
       at: now() });
-    trimChat();
     phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
     changed();
   }
@@ -563,8 +565,7 @@ function createRoom(options) {
     }
 
     round.accusedId = top[0];
-    chat.push({ kind: 'system', code: 'accused', who: nameOf(round.accusedId), text: `${nameOf(round.accusedId)}님이 지목되었습니다.`, at: now() });
-    trimChat();
+    pushChat({ kind: 'system', code: 'accused', who: nameOf(round.accusedId), text: `${nameOf(round.accusedId)}님이 지목되었습니다.`, at: now() });
 
     // LAN 버전에서는 지목된 본인이 REVEAL을 보내 줘야 정체를 알 수 있었고, 그 패킷이
     // 유실되면 전원이 무한 대기했다. 여기서는 서버가 이미 알고 있으니 왕복이 없다.
@@ -602,7 +603,7 @@ function createRoom(options) {
 
     // 결과는 화면 아래 카드로도 보이지만, 대화에도 남겨야 다음 판을 시작한 뒤에
     // "아까 누가 라이어였지?"를 되짚을 수 있다.
-    chat.push({
+    pushChat({
       kind: 'system', code: 'result', at: now(),
       winner, reason,
       liarName: result.liar.nickname,
@@ -610,7 +611,6 @@ function createRoom(options) {
       guess: result.guess || null,
       text: (winner === 'liar' ? 'Oliveyoung 승리' : winner === 'citizens' ? '시민 팀 승리' : '라운드 취소'),
     });
-    trimChat();
 
     phase = 'result';
     round = null;
@@ -667,8 +667,10 @@ function createRoom(options) {
           ? { id: currentSpeakerId(), nickname: nameOf(currentSpeakerId()) } : null,
         speakEndsAt: phase === 'turn' ? round.speakEndsAt : null,
         freeEndsAt: phase === 'free' ? round.freeEndsAt : null,
-        spokenCount: round.spoken.size,
-        speakTotal: round.speakOrder.length,
+        // 이미 나간 사람은 빼고 센다. 넣어서 세면 화면의 "N명 중 M명 설명함"이
+        // 끝까지 차지 않아서, 다 말했는데도 안 끝나는 것처럼 보인다.
+        spokenCount: [...round.spoken].filter((id) => players.has(id)).length,
+        speakTotal: round.speakOrder.filter((id) => players.has(id)).length,
         speakRound: round.speakRound,
         speakRounds: TURN_ROUNDS,
         proposal: round.proposal ? Object.assign(

@@ -347,6 +347,33 @@ async function main() {
     (await stays.page.textContent('#tally-label')).trim() || '(비어 있음)');
   check('X11 끝난 뒤에는 대화가 잠기지 않는다', !(await stays.page.isDisabled('#chat-input')));
 
+  // ── 대화가 상한(100줄)을 넘어도 화면이 멈추지 않는다 ──
+  // 길이만 보고 다시 그리면, 한 줄 밀어내고 한 줄 넣느라 길이가 그대로여서
+  // 100줄이 넘는 순간부터 새 글이 화면에 안 붙는다.
+  // 라이어가 나가서 혼자 남았으니, 다시 두 명을 만들어야 시작할 수 있다.
+  await liar3.page.fill('#nickname-input', liar3.name);
+  await liar3.page.click('#join-btn');
+  await stays.page.waitForFunction(
+    () => !document.getElementById('start-btn').disabled, null, { timeout: 5000 });
+  await stays.page.click('#start-btn');
+  await Promise.all(here.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
+  await finishExplanations(here);
+  await stays.page.waitForFunction(
+    () => !document.getElementById('chat-input').disabled, null, { timeout: 5000 });
+
+  // 속도 제한(5초에 60개)에 걸리지 않게 나눠 보낸다
+  for (let batch = 0; batch < 3; batch += 1) {
+    await stays.page.evaluate((n) => {
+      for (let i = 0; i < 40; i += 1) window.ws.send(JSON.stringify({ type: 'chat', text: `줄 ${n * 40 + i}` }));
+    }, batch);
+    await wait(5200);
+  }
+  await wait(600);
+  const chatText = await stays.page.textContent('#chat-messages');
+  check('X12 대화가 100줄을 넘어도 새 글이 계속 붙는다',
+    chatText.includes('줄 119'), `마지막 40자: ${chatText.replace(/\s+/g, ' ').trim().slice(-40)}`);
+  check('X12 오래된 글은 밀려난다 (무한정 쌓이지 않는다)', !chatText.includes('줄 0 '));
+
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }
 

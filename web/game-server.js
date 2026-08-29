@@ -136,72 +136,77 @@ function createGameServer(options) {
   }
 
   function handleMessage(client, ws, raw) {
-    {
-      // [S-2] 창 하나가 서버를 독차지하지 못하게 한다.
-      const now = Date.now();
-      if (now - client.windowStart > RATE_WINDOW_MS) {
-        client.windowStart = now;
-        client.count = 0;
-      }
-      client.count += 1;
-      if (client.count > RATE_MAX) {
-        if (client.count === RATE_MAX + 1) {
-          warn(`[속도 제한] ${client.playerId || '미참가'} 연결이 너무 많이 보냅니다 - 잠시 무시합니다`);
-          sendTo(ws, { type: 'error', message: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' });
-        }
-        return;
-      }
+    // 서버를 내리는 중이면 방이 이미 없다(호스트를 넘길 때 이 경로를 지난다).
+    if (!room) return;
 
-      let msg;
-      try { msg = JSON.parse(raw); } catch { return; }
-
-      const invalid = validateClientMessage(msg);
-      if (invalid) {
-        warn(`[요청 무시] ${invalid}`);
-        sendTo(ws, { type: 'error', message: '잘못된 요청입니다.' });
-        return;
-      }
-
-      // [E-3] 화면 쪽 확인. 브라우저는 WebSocket ping 프레임을 자바스크립트로 볼 수
-      // 없어서, 화면이 스스로 살아 있는지 확인하려면 이렇게 주고받아야 한다.
-      if (msg.type === 'ping') { sendTo(ws, { type: 'pong' }); return; }
-
-      if (msg.type === 'join') {
-        const joined = room.join({ nickname: msg.nickname, token: msg.token });
-        client.playerId = joined.playerId;
-        // 토큰은 브라우저가 저장해 두었다가 새로고침·재접속 때 같은 자리로 돌아오는 데 쓴다.
-        sendTo(ws, { type: 'welcome', playerId: joined.playerId, token: joined.token });
-        sendTo(ws, room.stateFor(joined.playerId));
-        log(`[참가] ${joined.restored ? '재접속' : '신규'} ${joined.playerId}`);
-        return;
-      }
-
-      if (!client.playerId) {
-        sendTo(ws, { type: 'error', message: '먼저 닉네임을 입력하고 접속해 주세요.' });
-        return;
-      }
-
-      // 나가기는 "돌아오지 않는다"는 선언이라 자리를 남기지 않는다. 소켓이 끊겨서
-      // 사라지는 것(disconnect)과 달리 10초 유예도 주지 않는다.
-      if (msg.type === 'leave') {
-        const goneId = client.playerId;
-        client.playerId = null;
-        room.leave(goneId);
-        log(`[퇴장] ${goneId}`);
-        return;
-      }
-
-      let reason = null;
-      if (msg.type === 'start') reason = room.start();
-      else if (msg.type === 'chat') reason = room.say(client.playerId, msg.text);
-      else if (msg.type === 'callVote') reason = room.callVote(client.playerId);
-      else if (msg.type === 'proposalVote') reason = room.respondProposal(client.playerId, msg.agree);
-      else if (msg.type === 'vote') reason = room.vote(client.playerId, msg.targetId);
-      else if (msg.type === 'guess') reason = room.guess(client.playerId, msg.word);
-
-      // 거절 사유는 요청한 사람에게만 알린다. 눌러도 아무 일이 없으면 원인을 알 수 없다.
-      if (reason) sendTo(ws, { type: 'error', message: reason });
+    // [S-2] 창 하나가 서버를 독차지하지 못하게 한다.
+    const now = Date.now();
+    if (now - client.windowStart > RATE_WINDOW_MS) {
+      client.windowStart = now;
+      client.count = 0;
     }
+    client.count += 1;
+    if (client.count > RATE_MAX) {
+      if (client.count === RATE_MAX + 1) {
+        warn(`[속도 제한] ${client.playerId || '미참가'} 연결이 너무 많이 보냅니다 - 잠시 무시합니다`);
+        sendTo(ws, { type: 'error', message: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' });
+      }
+      return;
+    }
+
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+
+    const invalid = validateClientMessage(msg);
+    if (invalid) {
+      warn(`[요청 무시] ${invalid}`);
+      sendTo(ws, { type: 'error', message: '잘못된 요청입니다.' });
+      return;
+    }
+
+    // [E-3] 화면 쪽 확인. 브라우저는 WebSocket ping 프레임을 자바스크립트로 볼 수
+    // 없어서, 화면이 스스로 살아 있는지 확인하려면 이렇게 주고받아야 한다.
+    if (msg.type === 'ping') { sendTo(ws, { type: 'pong' }); return; }
+
+    if (msg.type === 'join') {
+      // 한 연결이 참가를 두 번 보내면 앞서 잡았던 자리가 주인 없이 남는다. 연결이
+      // 끊길 때 정리되는 건 마지막 자리 하나뿐이라, 앞 자리는 "접속 중"인 채로
+      // 영영 목록에 남아 인원수와 시작 조건까지 어긋나게 만든다.
+      if (client.playerId) room.disconnect(client.playerId);
+      const joined = room.join({ nickname: msg.nickname, token: msg.token });
+      client.playerId = joined.playerId;
+      // 토큰은 브라우저가 저장해 두었다가 새로고침·재접속 때 같은 자리로 돌아오는 데 쓴다.
+      sendTo(ws, { type: 'welcome', playerId: joined.playerId, token: joined.token });
+      sendTo(ws, room.stateFor(joined.playerId));
+      log(`[참가] ${joined.restored ? '재접속' : '신규'} ${joined.playerId}`);
+      return;
+    }
+
+    if (!client.playerId) {
+      sendTo(ws, { type: 'error', message: '먼저 닉네임을 입력하고 접속해 주세요.' });
+      return;
+    }
+
+    // 나가기는 "돌아오지 않는다"는 선언이라 자리를 남기지 않는다. 소켓이 끊겨서
+    // 사라지는 것(disconnect)과 달리 10초 유예도 주지 않는다.
+    if (msg.type === 'leave') {
+      const goneId = client.playerId;
+      client.playerId = null;
+      room.leave(goneId);
+      log(`[퇴장] ${goneId}`);
+      return;
+    }
+
+    let reason = null;
+    if (msg.type === 'start') reason = room.start();
+    else if (msg.type === 'chat') reason = room.say(client.playerId, msg.text);
+    else if (msg.type === 'callVote') reason = room.callVote(client.playerId);
+    else if (msg.type === 'proposalVote') reason = room.respondProposal(client.playerId, msg.agree);
+    else if (msg.type === 'vote') reason = room.vote(client.playerId, msg.targetId);
+    else if (msg.type === 'guess') reason = room.guess(client.playerId, msg.word);
+
+    // 거절 사유는 요청한 사람에게만 알린다. 눌러도 아무 일이 없으면 원인을 알 수 없다.
+    if (reason) sendTo(ws, { type: 'error', message: reason });
   }
 
   /**

@@ -23,6 +23,16 @@ function lanAddresses() {
   return found;
 }
 
+// 웹 버전은 이 프로세스가 유일한 서버다. 여기서 죽으면 접속자 전원이 동시에 튕기고,
+// 다시 켜 줄 사람이 없으면 게임이 끝난다. Electron 버전(electron/main.js)과 같은
+// 판단으로, 예상 못 한 예외는 크게 남기되 프로세스는 살려 둔다.
+process.on('uncaughtException', (err) => {
+  error(`[치명적 오류] ${err && err.stack ? err.stack : err}`);
+});
+process.on('unhandledRejection', (reason) => {
+  error(`[처리되지 않은 실패] ${reason && reason.stack ? reason.stack : reason}`);
+});
+
 const server = createGameServer({ port: PORT });
 
 server.start().then(() => {
