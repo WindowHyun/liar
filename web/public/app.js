@@ -302,7 +302,7 @@ function scrollChatToBottom() {
 var JUMP_TEXT = {
   turn: '설명이 진행 중입니다',
   free: '자유 대화가 진행 중입니다',
-  proposal: '투표 여부를 정하는 중입니다',
+  proposal: 'O/X로 정하는 중입니다',
   voting: '투표가 진행 중입니다',
   guess: '정답을 기다리는 중입니다',
 };
@@ -406,14 +406,20 @@ function systemLine(m) {
   } else if (m.code === 'turnSkipped' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 설명 시간을 넘겼습니다.'));
-  } else if (m.code === 'freeStart') {
+  } else if (m.code === 'freeAsked') {
     p.textContent = (m.speakRounds > 1 ? m.speakRounds + '차 설명까지 끝났습니다.' : '설명이 모두 끝났습니다.')
-      + ' 이제 자유롭게 이야기하세요. (1분)';
+      + ' 자유 대화를 할까요?';
+  } else if (m.code === 'freeSkipped') {
+    p.textContent = '자유 대화를 건너뜁니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
+  } else if (m.code === 'freeStart') {
+    p.textContent = '이제 자유롭게 이야기하세요. (1분)';
   } else if (m.code === 'votingStarted') {
     // 찬반을 거쳐 온 경우와, 자유 대화 시간이 다 돼서 그냥 넘어온 경우를 구분한다.
-    p.textContent = m.byProposal === false
-      ? '자유 대화 시간이 끝났습니다. 투표를 진행합니다.'
-      : '투표를 진행합니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
+    p.textContent = m.from === 'freeSkipped'
+      ? '투표를 진행합니다.'
+      : m.byProposal === false
+        ? '자유 대화 시간이 끝났습니다. 투표를 진행합니다.'
+        : '투표를 진행합니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
   } else if (m.code === 'proposalRejected') {
     p.textContent = '투표 제안이 부결되었습니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ') 대화를 이어가세요.';
   } else {
@@ -500,7 +506,7 @@ function liveSignatureOf(s) {
   if (!s.you || !s.you.inRound) return '';
   if (s.phase === 'proposal' && s.round && s.round.proposal) {
     var p = s.round.proposal;
-    return 'p|' + p.agree + '|' + p.disagree + '|' + p.total + '|' + s.you.proposalAnswer;
+    return 'p|' + p.kind + '|' + p.agree + '|' + p.disagree + '|' + p.total + '|' + s.you.proposalAnswer;
   }
   if (s.phase === 'voting' && s.round) {
     return 'v|' + s.round.voted + '|' + s.round.total + '|' + s.you.hasVoted + '|' + here;
@@ -623,11 +629,16 @@ function buildProposal(s) {
 
   var text = document.createElement('div');
   text.className = 'text';
-  var w = document.createElement('span');
-  w.className = 'who-hl';
-  w.textContent = p.byName;
-  text.appendChild(w);
-  text.appendChild(document.createTextNode('님이 투표를 제안했습니다. 진행할까요?'));
+  if (p.kind === 'free') {
+    // 설명을 다 돌고 나서 "자유 대화를 할까요?"를 묻는 경우. 제안한 사람이 없다.
+    text.appendChild(document.createTextNode('설명이 모두 끝났습니다. 자유 대화를 할까요?'));
+  } else {
+    var w = document.createElement('span');
+    w.className = 'who-hl';
+    w.textContent = p.byName;
+    text.appendChild(w);
+    text.appendChild(document.createTextNode('님이 투표를 제안했습니다. 진행할까요?'));
+  }
   shell.body.appendChild(text);
 
   var chips = document.createElement('div');
@@ -662,7 +673,9 @@ function chip(value, emoji, count, picked) {
 function metaProposal(s) {
   var p = s.round.proposal;
   return '남은 시간 ' + secondsLeft(p.endsAt) + '초 · ' + p.total + '명 중 ' + (p.agree + p.disagree) + '명 응답'
-    + ' · 찬성이 절반 이상이면 투표로 넘어갑니다';
+    + (p.kind === 'free'
+      ? ' · 찬성이 절반 이상이면 자유 대화, 아니면 바로 투표로 넘어갑니다'
+      : ' · 찬성이 절반 이상이면 투표로 넘어갑니다');
 }
 
 function buildVote(s) {
@@ -904,6 +917,8 @@ function applyComposer(s) {
   } else if (s.phase === 'free') {
     locked = false;
     hint = '자유롭게 이야기하세요...';
+  } else if (s.phase === 'proposal' && s.round && s.round.proposal && s.round.proposal.kind === 'free') {
+    hint = '자유 대화를 할지 정하는 중입니다';
   } else {
     // 투표 버튼을 누른 순간(찬반)부터 결과가 날 때까지 대화를 막는다.
     hint = '투표가 끝날 때까지 대화할 수 없습니다';

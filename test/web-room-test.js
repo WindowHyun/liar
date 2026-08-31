@@ -54,6 +54,9 @@ const idsOf = (players) => players.map((p) => p.playerId);
 /**
  * 전원이 대화권을 한 번씩 써서 설명 단계를 끝낸다(1인 1회). 본론은 대개 그다음이라서.
  * 순서는 매 판 섞이므로 방에 물어보며 진행한다.
+ *
+ * 설명을 다 돌면 "자유 대화를 할까요?" O/X가 뜬다. 여기서는 전원 찬성으로 통과시켜
+ * 자유 대화까지 연다(그 O/X 자체를 보는 테스트는 answerFreeAsk를 직접 쓴다).
  */
 function passTurns(room) {
   for (let guard = 0; guard < 200; guard += 1) {
@@ -63,6 +66,15 @@ function passTurns(room) {
     if (!speaker) break;
     room.say(speaker, `${speaker} 설명합니다`);
   }
+  answerFreeAsk(room, true);
+}
+
+/** 자유 대화 O/X에 전원이 같은 답을 낸다. 그 단계가 아니면 아무것도 하지 않는다. */
+function answerFreeAsk(room, agree) {
+  const dbg = room._debug();
+  if (dbg.phase !== 'proposal' || !dbg.round || !dbg.round.proposal) return;
+  if (dbg.round.proposal.kind !== 'free') return;
+  for (const r of dbg.round.roster) room.respondProposal(r.id, agree);
 }
 
 /** 투표를 제안하고 전원 찬성으로 통과시킨다. 설명이 안 끝났으면 먼저 끝낸다. */
@@ -739,11 +751,16 @@ function w37_twoSpeakRounds() {
     typeof tooEarly === 'string' && tooEarly.includes('설명'), tooEarly || '통과해버림');
 
   second.forEach((id) => room.say(id, '2차 설명'));
-  check('W37 [규칙] 2차까지 끝나야 자유 대화가 열린다',
-    room._debug().phase === 'free', room._debug().phase);
-  check('W37 자유 대화 안내가 2차까지 끝났다고 말한다',
-    room.stateFor(ids[0]).chat.some((m) => m.code === 'freeStart' && m.text.includes('2차')));
+  // [규칙 변경] 2차까지 끝나면 바로 자유 대화가 아니라, 할지 말지를 먼저 O/X로 묻는다.
+  check('W37 [규칙] 2차까지 끝나면 자유 대화 O/X를 묻는다',
+    room._debug().phase === 'proposal' && room._debug().round.proposal.kind === 'free',
+    room._debug().phase);
+  check('W37 무엇을 묻는지 대화에 남는다',
+    room.stateFor(ids[0]).chat.some((m) => m.code === 'freeAsked' && m.text.includes('2차')));
 
+  answerFreeAsk(room, true);
+  check('W37 [규칙] 찬성하면 자유 대화가 열린다',
+    room._debug().phase === 'free', room._debug().phase);
   check('W37 [규칙] 자유 대화부터 투표를 제안할 수 있다', room.callVote(ids[0]) === null);
 }
 
@@ -898,7 +915,11 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w42_duplicateNicknames, w43_nicknameEdgeCases, w44_systemLinesSurviveFlooding,
   w45_wordListIsValidated,
   w46_lastLeaverResetsTheRoom, w47_emptyRoomResetsAfterDisconnectGrace,
-  w48_newGroupStartsClean]) {
+  w48_newGroupStartsClean,
+  w49_roomCapacity, w50_capacityDoesNotBlockReconnect,
+  w51_noBackToBackSpeaker, w52_noBackToBackWithTwoPlayers,
+  w53_freeChatIsAsked, w54_freeChatAgreedOpensFreeChat, w55_freeAskTimeoutSkips,
+  w56_voteProposalStillWorks]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 
@@ -962,6 +983,149 @@ function w48_newGroupStartsClean() {
 
   const reason = room.start();
   check('W48 새 판이 정상적으로 시작된다', !reason && room._debug().phase === 'turn', reason || '');
+}
+
+
+// ── 요청: 최대 인원 / 연속 설명 금지 / 자유 대화 O-X ─────────────────────
+
+function w49_roomCapacity() {
+  const { room } = makeRoom(['A'], 0);
+  const joined = [];
+  for (let i = 2; i <= room.MAX_PLAYERS; i += 1) joined.push(room.join({ nickname: `참가자${i}` }));
+  check('W49 [요청] 정원은 8명이다', room.MAX_PLAYERS === 8, String(room.MAX_PLAYERS));
+  check('W49 8명까지는 다 들어온다',
+    room.playerIds().length === 8 && joined.every((j) => !j.error), String(room.playerIds().length));
+
+  const overflow = room.join({ nickname: '아홉번째' });
+  check('W49 9번째는 사유와 함께 막힌다',
+    !!overflow.error && overflow.error.includes('8'), overflow.error || '들어와버림');
+  check('W49 막힌 사람은 목록에 남지 않는다', room.playerIds().length === 8);
+  check('W49 정원은 화면에도 내려간다', room.stateFor(room.playerIds()[0]).maxPlayers === 8);
+}
+
+function w50_capacityDoesNotBlockReconnect() {
+  // 정원을 새 참가자에게만 걸어야 한다. 돌아오는 사람까지 막으면 방이 꽉 찬 상태에서
+  // 잠깐 튕긴 사람이 자기 자리를 영영 잃는다.
+  const { room, players } = makeRoom(['A'], 0);
+  for (let i = 2; i <= 8; i += 1) room.join({ nickname: `참가자${i}` });
+  check('W50 방이 가득 찼다', room.playerIds().length === 8);
+
+  const me = players[0];
+  room.disconnect(me.playerId); // 자리는 남아 있다(10초 유예)
+  const back = room.join({ nickname: 'A', token: me.token });
+  check('W50 가득 찬 방에서도 원래 있던 사람은 돌아올 수 있다',
+    !back.error && back.restored === true && back.playerId === me.playerId,
+    back.error || `restored=${back.restored}`);
+}
+
+function w51_noBackToBackSpeaker() {
+  // [요청] 같은 사람이 두 번 연속으로 설명하지 않게. 1차의 마지막과 2차의 첫 번째가
+  // 겹치는 자리에서만 생긴다. 순서가 매번 섞이므로 여러 판을 돌려서 확인한다.
+  let collisions = 0;
+  const rounds = 40;
+  for (let n = 0; n < rounds; n += 1) {
+    const room = createRoom({ setTimer, clearTimer, now, random: Math.random });
+    const ids = ['A', 'B', 'C', 'D'].map((x) => room.join({ nickname: x }).playerId);
+    room.start();
+    const first = room._debug().round.speakOrder.slice();
+    first.forEach((id) => room.say(id, '1차'));
+    const second = room._debug().round.speakOrder.slice();
+    if (first[first.length - 1] === second[0]) collisions += 1;
+    void ids;
+  }
+  check('W51 [요청] 1차의 마지막이 2차의 첫 번째로 이어지지 않는다',
+    collisions === 0, `${rounds}판 중 ${collisions}판에서 연속`);
+}
+
+function w52_noBackToBackWithTwoPlayers() {
+  // 2명이면 순서가 [A,B] 둘뿐이라 가장 빡빡하다. 그래도 언제나 만족할 수 있어야 한다.
+  for (let n = 0; n < 20; n += 1) {
+    const room = createRoom({ setTimer, clearTimer, now, random: Math.random });
+    const ids = ['A', 'B'].map((x) => room.join({ nickname: x }).playerId);
+    room.start();
+    const first = room._debug().round.speakOrder.slice();
+    first.forEach((id) => room.say(id, '1차'));
+    const second = room._debug().round.speakOrder.slice();
+    if (first[1] === second[0] || new Set(second).size !== 2) {
+      check('W52 2명일 때도 연속으로 걸리지 않는다', false, `1차 ${first} / 2차 ${second}`);
+      void ids;
+      return;
+    }
+  }
+  check('W52 2명일 때도 연속으로 걸리지 않는다 (20판)', true);
+}
+
+function w53_freeChatIsAsked() {
+  // [요청] 설명 → 자유 대화 O/X → (찬성) 자유 대화 / (부결) 바로 투표
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const ids = idsOf(players);
+  for (let g = 0; g < 200 && room._debug().phase === 'turn'; g += 1) {
+    const d = room._debug();
+    room.say(d.round.speakOrder[d.round.speakIndex], '설명');
+  }
+
+  const s = room.stateFor(ids[0]);
+  check('W53 설명이 끝나면 자유 대화 O/X를 묻는다', s.phase === 'proposal', s.phase);
+  check('W53 무엇을 묻는 O/X인지 구분된다', s.round.proposal.kind === 'free', s.round.proposal.kind);
+  check('W53 O/X 중에는 대화가 막힌다',
+    typeof room.say(ids[0], '한마디') === 'string');
+
+  for (const id of ids) room.respondProposal(id, false); // 전원 반대
+  check('W53 [요청] 부결되면 자유 대화를 건너뛰고 바로 투표로 간다',
+    room._debug().phase === 'voting', room._debug().phase);
+  check('W53 건너뛴 것이 대화에 남는다',
+    room.stateFor(ids[0]).chat.some((m) => m.code === 'freeSkipped'));
+  check('W53 건너뛰었으면 "자유 대화 시간이 끝났다"고 하지 않는다',
+    !room.stateFor(ids[0]).chat.some((m) => m.code === 'votingStarted' && m.text.includes('시간이 끝났')),
+    room.stateFor(ids[0]).chat.filter((m) => m.code === 'votingStarted').map((m) => m.text).join(''));
+}
+
+function w54_freeChatAgreedOpensFreeChat() {
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const ids = idsOf(players);
+  for (let g = 0; g < 200 && room._debug().phase === 'turn'; g += 1) {
+    const d = room._debug();
+    room.say(d.round.speakOrder[d.round.speakIndex], '설명');
+  }
+  for (const id of ids) room.respondProposal(id, true);
+  check('W54 [요청] 찬성하면 자유 대화가 열린다', room._debug().phase === 'free', room._debug().phase);
+  check('W54 자유 대화에서는 말할 수 있다', room.say(ids[1], '이야기') === null);
+  check('W54 자유 대화 O/X는 정리된다', room.stateFor(ids[0]).round.proposal === null);
+}
+
+function w55_freeAskTimeoutSkips() {
+  // 아무도 답하지 않으면(전원 자리 비움) 자유 대화를 열어 둘 이유가 없다. 바로 투표로 간다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  for (let g = 0; g < 200 && room._debug().phase === 'turn'; g += 1) {
+    const d = room._debug();
+    room.say(d.round.speakOrder[d.round.speakIndex], '설명');
+  }
+  check('W55 자유 대화 O/X가 떠 있다', room._debug().phase === 'proposal');
+  advance(room.PROPOSAL_MS + 1000);
+  check('W55 아무도 답하지 않으면 제한 시간 뒤 투표로 넘어간다',
+    room._debug().phase === 'voting', room._debug().phase);
+  void players;
+}
+
+function w56_voteProposalStillWorks() {
+  // 자유 대화 O/X를 넣으면서 기존 투표 제안 O/X가 망가지지 않아야 한다.
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D'], 0);
+  room.start();
+  const ids = idsOf(players);
+  passTurns(room); // 자유 대화까지 연다
+  check('W56 자유 대화 중이다', room._debug().phase === 'free');
+
+  room.callVote(ids[0]);
+  const s = room.stateFor(ids[0]);
+  check('W56 투표 제안 O/X는 kind가 다르다', s.round.proposal.kind === 'vote', s.round.proposal.kind);
+  check('W56 누가 제안했는지도 그대로다', s.round.proposal.byName === 'A', s.round.proposal.byName);
+
+  for (const id of ids) room.respondProposal(id, false);
+  check('W56 투표 제안이 부결되면 자유 대화로 돌아간다',
+    room._debug().phase === 'free', room._debug().phase);
 }
 
 const failed = results.filter((r) => !r.ok).length;

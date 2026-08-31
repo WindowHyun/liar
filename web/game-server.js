@@ -174,6 +174,12 @@ function createGameServer(options) {
       // 영영 목록에 남아 인원수와 시작 조건까지 어긋나게 만든다.
       if (client.playerId) room.disconnect(client.playerId);
       const joined = room.join({ nickname: msg.nickname, token: msg.token });
+      // 정원이 찬 경우. 자리를 잡지 못했으므로 playerId를 붙이지 않는다.
+      if (joined.error) {
+        warn(`[참가 거절] ${joined.error}`);
+        sendTo(ws, { type: 'error', message: joined.error });
+        return;
+      }
       client.playerId = joined.playerId;
       // 토큰은 브라우저가 저장해 두었다가 새로고침·재접속 때 같은 자리로 돌아오는 데 쓴다.
       sendTo(ws, { type: 'welcome', playerId: joined.playerId, token: joined.token });

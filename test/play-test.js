@@ -160,7 +160,9 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
       await wait(320);
       const stillMine = await sp.page.locator('#composer.my-turn').count();
       if (i === 0) check('말하고 나면 곧바로 잠긴다 (1인 1회)', stillMine === 0);
-      const nowBadge = await p1.page.textContent('#live-block .round-badge').catch(() => null);
+      // 설명이 끝나면 배지가 사라진다. timeout을 안 주면 Playwright 기본값(30초)을
+      // 꼬박 기다려서, 그 사이 자유 대화 O/X(20초)가 만료된다.
+      const nowBadge = await p1.page.textContent('#live-block .round-badge', { timeout: 1000 }).catch(() => null);
       if (!nowBadge || nowBadge.trim() !== `${roundNo}차`) break;
     }
   }
@@ -171,10 +173,25 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   check('1차를 다 돌면 2차로 넘어간다', true);
   await playRound(2);
 
+  // [요청] 설명이 끝나면 자유 대화를 할지 다 같이 O/X로 정한다.
+  log('\n━━━━━━━━━━ 자유 대화를 할까요? ━━━━━━━━━━');
+  await Promise.all(players.map((p) => p.page.waitForSelector('#live-block .chip', { timeout: 8000 })));
+  check('설명이 끝나면 자유 대화 O/X를 묻는다',
+    (await p1.page.textContent('#chat-messages')).includes('자유 대화를 할까요?'));
+  check('O/X를 정하는 동안에는 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
+  if (OUT) await p1.page.screenshot({ path: `${OUT}/03-free-ask.png` });
+
+  for (const p of players) {
+    // 찬성이 절반을 넘는 순간 O/X가 사라지므로 매번 다시 찾는다.
+    const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
+    if (await yes.count()) { await yes.click().catch(() => {}); log(`     ${p.name.padEnd(3)} : ✅`); }
+    await wait(200);
+  }
+
   await Promise.all(players.map((p) => p.page.waitForFunction(
     () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), null, { timeout: 8000 })));
   log('\n━━━━━━━━━━ 자유 대화 ━━━━━━━━━━');
-  check('2차까지 마치면 자유 대화가 열린다', true);
+  check('찬성하면 자유 대화가 열린다', true);
   check('전원의 입력창이 열린다', !(await Promise.all(players.map((p) => p.page.isDisabled('#chat-input')))).some(Boolean));
   check('이제 투표를 제안할 수 있다', !(await p1.page.isDisabled('#vote-btn')));
 

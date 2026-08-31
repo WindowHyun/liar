@@ -61,7 +61,8 @@ async function speakOnce(pages) {
 async function finishOneRound(pages) {
   for (let i = 0; i < pages.length + 1; i += 1) {
     if (!(await speakOnce(pages))) return;
-    const badge = await pages[0].page.textContent('#live-block .round-badge').catch(() => null);
+    // 배지가 사라졌을 때 기본 30초를 기다리지 않도록 짧게 끊는다.
+    const badge = await pages[0].page.textContent('#live-block .round-badge', { timeout: 1000 }).catch(() => null);
     if (badge && badge.trim() !== '1차') return; // 다음 바퀴로 넘어갔다
   }
 }
@@ -69,8 +70,26 @@ async function finishOneRound(pages) {
 /** 정해진 바퀴를 모두 돌아 설명 단계를 끝낸다. */
 async function finishExplanations(pages) {
   for (let guard = 0; guard < pages.length * 3 + 3; guard += 1) {
-    if (!(await speakOnce(pages))) return;
+    if (!(await speakOnce(pages))) break;
   }
+  await agreeToFreeChat(pages);
+}
+
+/**
+ * 설명을 다 돌면 "자유 대화를 할까요?" O/X가 뜬다. 전원 찬성으로 통과시켜 자유 대화를 연다.
+ * (그 O/X 자체를 보는 테스트는 이 도우미를 쓰지 않고 직접 누른다.)
+ */
+async function agreeToFreeChat(pages) {
+  for (const p of pages) {
+    // 찬성이 절반을 넘는 순간 O/X가 사라지므로(3명이면 2명째에 끝난다), 매번 다시 찾는다.
+    // 붙잡아 둔 요소를 나중에 누르면 이미 다시 그려져서 "DOM에 없다"로 실패한다.
+    const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
+    if (await yes.count()) await yes.click().catch(() => {});
+    await wait(200);
+  }
+  await pages[0].page.waitForFunction(
+    () => document.querySelector('#live-block').textContent.includes('자유 대화 중'),
+    null, { timeout: 5000 });
 }
 
 function waitForServer(timeoutMs) {
@@ -178,6 +197,8 @@ async function main() {
     () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), null, { timeout: 5000 })));
   check('X3 [규칙] 2차까지 마쳐야 자유 채팅으로 넘어간다',
     (await p1.page.textContent('#chat-messages')).includes('2차 설명까지 끝났습니다'));
+  check('X3 [요청] 자유 대화 전에 할지 말지를 물었다',
+    (await p1.page.textContent('#chat-messages')).includes('자유 대화를 할까요?'));
   // 대화에 남는 기록과 진행 블록이 같은 문장을 두 번 찍지 않는다
   check('X3 자유 채팅 안내가 두 번 찍히지 않는다',
     (await p1.page.textContent('#chat')).split('자유롭게 이야기하세요').length === 2);

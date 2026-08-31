@@ -56,6 +56,8 @@ function validateWordList(list) {
 validateWordList(WORD_LIST);
 
 const MIN_PLAYERS = 2;
+// 한 방에 들어올 수 있는 최대 인원. 넘으면 새로 들어오려는 사람을 막는다(재접속은 막지 않는다).
+const MAX_PLAYERS = 8;
 const TURN_ROUNDS = 2;          // 설명을 몇 바퀴 도는가. 1차는 첫인상, 2차는 서로를 듣고 나서.
 const SPEAK_MS = 60000;         // 한 사람의 설명 차례 제한 시간
 const FREE_MS = 60000;          // 설명이 끝난 뒤 자유 채팅 1분
@@ -283,6 +285,13 @@ function createRoom(options) {
       }
     }
 
+    // 여기까지 왔으면 새로 들어오는 사람이다(위의 재접속·자리 복구는 이미 지났다).
+    // 정원은 새 참가자에게만 건다. 돌아오는 사람까지 막으면 잠깐 튕긴 사람이 자기 자리를
+    // 잃어버린다.
+    if (players.size >= MAX_PLAYERS) {
+      return { error: `방이 가득 찼습니다. (최대 ${MAX_PLAYERS}명)` };
+    }
+
     const player = {
       id: crypto.randomUUID().slice(0, 8),
       token: crypto.randomBytes(16).toString('hex'),
@@ -382,6 +391,7 @@ function createRoom(options) {
       speakOrder: shuffle(roster.map((p) => p.id)),
       speakIndex: 0,
       speakRound: 1,            // 지금 몇 바퀴째인가 (1차 → 2차 → 자유 대화)
+      lastSpokenId: null,       // 직전에 실제로 설명을 마친 사람. 바퀴가 넘어갈 때 연속을 피하는 데 쓴다.
       spoken: new Set(),        // 이번 바퀴에 대화권을 쓴 사람 (한 바퀴에 1인 1회)
       speakEndsAt: null,
       freeEndsAt: null,
@@ -413,15 +423,33 @@ function createRoom(options) {
   }
 
   /**
+   * [요청] 같은 사람이 두 번 연속으로 설명하지 않게 한다.
+   *
+   * 바퀴가 넘어가는 자리에서만 생긴다. 1차의 마지막이 2차의 첫 번째로 다시 뽑히면
+   * 방금 말한 사람이 곧바로 또 말하게 된다. 순서를 섞은 뒤 첫 자리만 확인해서,
+   * 겹치면 뒤쪽 아무 자리와 바꾼다(다시 섞지 않는 이유: 몇 번을 섞어야 할지 알 수 없다).
+   *
+   * 2명이면 [A,B] → 직전이 B였으면 A가 먼저 온다. 언제나 가능하다.
+   */
+  function withoutBackToBack(order, lastId) {
+    if (!lastId || order.length < 2 || order[0] !== lastId) return order;
+    const swapWith = 1 + Math.floor(random() * (order.length - 1));
+    const swapped = order.slice();
+    swapped[0] = swapped[swapWith];
+    swapped[swapWith] = lastId;
+    return swapped;
+  }
+
+  /**
    * 한 바퀴가 끝났다. 남은 바퀴가 있으면 순서를 다시 섞어 이어가고, 없으면 자유 대화로 간다.
    * 아직 아무도 말하지 않은 사람만 남기지 않고 통째로 다시 도는 이유: 2차는 "남의 설명을
    * 듣고 나서" 하는 말이라 1차와 성격이 다르다. 순서도 새로 섞어야 같은 사람이 계속
    * 마지막에 걸리지 않는다.
    */
   function nextSpeakRound() {
-    if (round.speakRound >= TURN_ROUNDS) { beginFree(); return; }
+    if (round.speakRound >= TURN_ROUNDS) { askForFreeChat(); return; }
     round.speakRound += 1;
-    round.speakOrder = shuffle(round.roster.map((r) => r.id));
+    round.speakOrder = withoutBackToBack(shuffle(round.roster.map((r) => r.id)), round.lastSpokenId);
     round.speakIndex = 0;
     round.spoken = new Set();
     pushChat({ kind: 'system', code: 'speakRoundStart', at: now(), speakRound: round.speakRound,
@@ -453,14 +481,50 @@ function createRoom(options) {
     changed();
   }
 
+  /**
+   * [요청] 설명을 다 돌고 나면 자유 대화를 할지 다 같이 O/X로 정한다.
+   *
+   * 예전에는 곧바로 자유 대화 1분이 열렸다. 이미 충분히 드러난 판에서는 그 1분이
+   * 늘어지기만 해서, 할지 말지를 먼저 묻는다. 부결되면 자유 대화를 건너뛰고 바로 투표다.
+   *
+   * 투표 제안(callVote)과 같은 O/X 화면을 쓴다. 무엇을 묻는지는 kind로 구분한다.
+   */
+  function askForFreeChat() {
+    clearPhaseTimer();
+    round.speakEndsAt = null;
+    round.proposal = {
+      kind: 'free',
+      by: null,
+      byName: null,
+      answers: new Map(),
+      endsAt: now() + PROPOSAL_MS,
+    };
+    phase = 'proposal';
+    pushChat({ kind: 'system', code: 'freeAsked', at: now(), speakRounds: TURN_ROUNDS,
+      text: `${TURN_ROUNDS}차 설명까지 끝났습니다. 자유 대화를 할까요?` });
+    phaseTimer = setTimer(() => { phaseTimer = null; settleProposal(true); }, PROPOSAL_MS);
+    changed();
+  }
+
+  /** 자유 대화 없이 곧바로 투표로 간다(자유 대화 O/X가 부결된 경우). */
+  function skipFreeChat() {
+    clearPhaseTimer();
+    const { agree, disagree } = proposalCounts();
+    round.proposal = null;
+    pushChat({ kind: 'system', code: 'freeSkipped', agree, disagree, at: now(),
+      text: `자유 대화를 건너뜁니다. (찬성 ${agree} / 반대 ${disagree})` });
+    beginVoting('freeSkipped');
+  }
+
   /** 정해진 바퀴를 모두 돌았다. 이제 다 같이 이야기한다. */
   function beginFree() {
     clearPhaseTimer();
+    round.proposal = null;
     phase = 'free';
     round.speakEndsAt = null;
     round.freeEndsAt = now() + FREE_MS;
     pushChat({ kind: 'system', code: 'freeStart', at: now(), speakRounds: TURN_ROUNDS,
-      text: `${TURN_ROUNDS}차 설명까지 끝났습니다. 이제 자유롭게 이야기하세요. (1분)` });
+      text: '이제 자유롭게 이야기하세요. (1분)' });
     // 1분이 다 되면 곧바로 투표로 간다. 이미 충분히 이야기했으니 찬반을 다시 묻지 않는다.
     phaseTimer = setTimer(() => {
       phaseTimer = null;
@@ -510,6 +574,7 @@ function createRoom(options) {
     // 설명을 마쳤으면 대화권을 다음 사람에게 넘긴다.
     if (phase === 'turn') {
       round.spoken.add(playerId);
+      round.lastSpokenId = playerId;
       round.speakIndex += 1;
       beginTurn();
       return null;
@@ -528,6 +593,7 @@ function createRoom(options) {
     if (!inRound(playerId)) return '이번 라운드 참가자가 아닙니다.';
 
     round.proposal = {
+      kind: 'vote',
       by: playerId,
       byName: nameOf(playerId),
       answers: new Map(), // playerId -> true(찬성) / false(반대)
@@ -578,11 +644,18 @@ function createRoom(options) {
     // 이 경우는 W-1의 라운드 취소가 처리한다.
     if (total <= 0) { changed(); return; }
 
-    if (agree * 2 >= total) { beginVoting(); return; }
-    if (disagree * 2 > total) { rejectProposal(); return; }
+    // 무엇을 물었는지에 따라 가결/부결이 가리키는 곳이 다르다.
+    //   투표 제안 : 가결 → 투표      / 부결 → 자유 대화로 돌아감
+    //   자유 대화 : 가결 → 자유 대화 / 부결 → 자유 대화를 건너뛰고 투표
+    const asksFreeChat = round.proposal.kind === 'free';
+    const passed = () => { if (asksFreeChat) beginFree(); else beginVoting(); };
+    const failed = () => { if (asksFreeChat) skipFreeChat(); else rejectProposal(); };
+
+    if (agree * 2 >= total) { passed(); return; }
+    if (disagree * 2 > total) { failed(); return; }
     if (force || answered >= total) {
-      if (agree * 2 >= total) beginVoting();
-      else rejectProposal();
+      if (agree * 2 >= total) passed();
+      else failed();
       return;
     }
     changed();
@@ -603,20 +676,23 @@ function createRoom(options) {
     changed();
   }
 
-  function beginVoting() {
+  function beginVoting(via) {
     clearPhaseTimer();
-    // 찬반을 거쳐 왔는지, 자유 채팅 시간이 다 돼서 그냥 넘어온 것인지 구분한다.
-    const byProposal = !!round.proposal;
+    // 어떻게 여기까지 왔는가. 안내 문구가 달라진다.
+    //   'proposal' 투표 제안이 가결됨 / 'freeSkipped' 자유 대화를 건너뜀 / 그 외 자유 대화 시간 종료
+    const from = via || (round.proposal ? 'proposal' : 'freeTimeout');
     const { agree, disagree } = proposalCounts();
     round.proposal = null;
     round.freeEndsAt = null;
     round.votes.clear();
     round.votingEndsAt = now() + VOTE_MS;
     phase = 'voting';
-    pushChat({ kind: 'system', code: 'votingStarted', byProposal, agree, disagree,
-      text: byProposal
+    pushChat({ kind: 'system', code: 'votingStarted', byProposal: from === 'proposal', from, agree, disagree,
+      text: from === 'proposal'
         ? `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`
-        : '자유 대화 시간이 끝났습니다. 투표를 진행합니다.',
+        : from === 'freeSkipped'
+          ? '투표를 진행합니다.'
+          : '자유 대화 시간이 끝났습니다. 투표를 진행합니다.',
       at: now() });
     phaseTimer = setTimer(() => { phaseTimer = null; tally(); }, VOTE_MS);
     changed();
@@ -730,6 +806,7 @@ function createRoom(options) {
       type: 'state',
       phase,
       minPlayers: MIN_PLAYERS,
+      maxPlayers: MAX_PLAYERS,
       serverTime: now(), // 클라이언트 시계가 어긋나 있어도 남은 시간을 정확히 세도록
       you: me ? {
         id: me.id,
@@ -777,7 +854,7 @@ function createRoom(options) {
         speakRound: round.speakRound,
         speakRounds: TURN_ROUNDS,
         proposal: round.proposal ? Object.assign(
-          { by: round.proposal.by, byName: round.proposal.byName, endsAt: round.proposal.endsAt },
+          { kind: round.proposal.kind, by: round.proposal.by, byName: round.proposal.byName, endsAt: round.proposal.endsAt },
           proposalCounts(),
         ) : null,
         votingEndsAt: round.votingEndsAt,
@@ -798,11 +875,11 @@ function createRoom(options) {
     playerIds: () => [...players.keys()],
     // 테스트에서 들여다보기 위한 것. 서버는 쓰지 않는다.
     _debug: () => ({ phase, round, result }),
-    MIN_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
+    MIN_PLAYERS, MAX_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
   };
 }
 
 module.exports = {
   createRoom, validateWordList,
-  MIN_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
+  MIN_PLAYERS, MAX_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
 };

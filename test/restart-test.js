@@ -56,10 +56,20 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
 async function passTurns(ps) {
   for (let i = 0; i < ps.length * 3 + 3; i += 1) {
     const sp = await speaker(ps);
-    if (!sp) return;
+    if (!sp) break;
     await sp.page.fill('#chat-input', `${sp.name}의 설명`);
     await sp.page.press('#chat-input', 'Enter');
     await wait(260);
+  }
+  await agreeToFreeChat(ps);
+}
+
+/** 설명이 끝나면 뜨는 "자유 대화를 할까요?" O/X를 전원 찬성으로 통과시킨다. */
+async function agreeToFreeChat(ps) {
+  for (const p of ps) {
+    // 절반을 넘는 순간 사라지므로 매번 다시 찾는다.
+    await p.page.click('#live-block .chip[data-agree="yes"]', { timeout: 2000 }).catch(() => {});
+    await wait(200);
   }
 }
 /** 라이어를 찾아 지목하고 오답을 내게 해서 한 판을 끝낸다. */
