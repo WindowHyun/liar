@@ -18,6 +18,7 @@ const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, s
 const { createPeer, DEFAULT_PORT } = require('./peer');
 const { createUiServer } = require('./ui-server');
 const { createAttention, needsAttention } = require('./attention');
+const { runSteps } = require('./shutdown');
 const { log, error, LOG_PATH } = require('../logger');
 
 const PORT = Number(process.env.LIAR_PORT) || DEFAULT_PORT;
@@ -283,12 +284,19 @@ ipcMain.handle('get-status', () => (peer ? peer.status() : null));
 // 창이 눈앞에 있으면 startAttention()이 알아서 무시한다.
 ipcMain.on('attention', () => { startAttention(); });
 
+/**
+ * 창을 모두 닫았을 때. 정리 하나가 실패해도 반드시 app.quit()까지 간다.
+ * 여기서 멈추면 프로세스가 게임 포트와 화면 포트를 쥔 채 남아서, 다음에 켤 때
+ * "포트를 다른 프로그램이 쓰고 있습니다"가 된다(원인이 방금 닫은 자기 자신이다).
+ */
 app.on('window-all-closed', async () => {
-  if (attention) { attention.stop(); attention = null; }
-  if (tray) { tray.destroy(); tray = null; }
-  closeSplash();
-  if (peer) await peer.stop();
-  if (uiServer) uiServer.stop();
+  await runSteps([
+    ['알림 정리', () => { if (attention) { attention.stop(); attention = null; } }],
+    ['트레이 정리', () => { if (tray) { tray.destroy(); tray = null; } }],
+    ['로딩 화면 정리', () => { closeSplash(); }],
+    ['참가자 발견/게임 서버 정리', async () => { if (peer) await peer.stop(); peer = null; }],
+    ['화면 서버 정리', () => { if (uiServer) { uiServer.stop(); uiServer = null; } }],
+  ], (what, err) => error(`[종료] ${what} 실패: ${err && err.stack ? err.stack : err}`));
   app.quit();
 });
 

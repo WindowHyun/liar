@@ -11,6 +11,7 @@
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const { createGameServer } = require('../web/game-server');
 
 let chromium;
 try {
@@ -414,10 +415,51 @@ async function main() {
   // ── 예전 버전 서버에 붙었을 때 (롤아웃 중 섞이는 상황) ──
   // v0.8.0 이하는 화면이 보내는 연결 확인(ping)을 모른다. 거절당한 것을 그대로 배너로
   // 띄우면 20초마다 "잘못된 요청입니다"가 떠서 고장난 것처럼 보인다.
+  await bannerAutoHideCheck(browser);
   await spectatorBannerCheck(browser);
   await oldServerCheck(browser);
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+}
+
+/**
+ * X15 [이슈] 같은 안내가 자동 숨김 시간 안에 두 번 뜨면 영영 남았다.
+ *
+ * 글자가 같으면 다시 그리지 않도록 막아 둔 곳에서, 이미 꺼 놓은 자동 숨김 타이머를
+ * 다시 걸지 않고 빠져나갔다. 연결이 끊긴 채 시작 버튼을 두 번 누르는 것처럼
+ * 같은 안내가 연달아 뜨는 상황이 흔해서, 5초 뒤 사라져야 할 안내가 계속 떠 있었다.
+ */
+async function bannerAutoHideCheck(browser) {
+  // 배너는 #screen-game 안에 있다. 접속 화면에서는 어차피 안 보이므로 먼저 들어간다.
+  const own = createGameServer({ port: PORT + 6 });
+  await own.start();
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`http://127.0.0.1:${PORT + 6}`);
+  await page.fill('#nickname-input', '배너');
+  await page.click('#join-btn');
+  await page.waitForSelector('#screen-game:not(.hidden)', { timeout: 5000 });
+
+  // 화면이 실제로 쓰는 함수를 그대로 부른다.
+  await page.evaluate(() => { window.showBanner('warn', '같은 안내', 800); });
+  check('X15 안내가 뜬다', !(await page.isHidden('#banner')));
+
+  await wait(200);
+  await page.evaluate(() => { window.showBanner('warn', '같은 안내', 800); });  // 같은 글자로 한 번 더
+  check('X15 두 번째에도 그대로 떠 있다', !(await page.isHidden('#banner')));
+
+  await wait(1400);
+  check('X15 [이슈] 같은 안내가 두 번 떠도 자동으로 사라진다',
+    await page.isHidden('#banner'),
+    (await page.textContent('#banner')).trim() || '(숨김)');
+
+  // 자동 숨김이 없는 안내(관전 등)는 그대로 남아야 한다
+  await page.evaluate(() => { window.showBanner('ok', '계속 떠 있어야 하는 안내', 0); });
+  await wait(1000);
+  check('X15 자동 숨김이 없는 안내는 남는다', !(await page.isHidden('#banner')));
+
+  await ctx.close();
+  await own.stop();
 }
 
 /**
@@ -428,7 +470,6 @@ async function main() {
  */
 async function spectatorBannerCheck(browser) {
   // 앞선 테스트가 쓰던 방에는 사람과 판이 남아 있다. 깨끗한 방에서 본다.
-  const { createGameServer } = require('../web/game-server');
   const own = createGameServer({ port: PORT + 5 });
   await own.start();
   const ownUrl = `http://127.0.0.1:${PORT + 5}`;

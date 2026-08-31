@@ -86,15 +86,28 @@ var bannerHideTimer = null;
 function showBanner(kind, text, autoHideMs, why) {
   var banner = $('banner');
   if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
-  // 같은 배너를 다시 띄우는 것이면 손대지 않는다. 매 상태마다 글자를 갈아 끼우면
+
+  // 같은 배너를 다시 띄우는 것이면 글자는 손대지 않는다. 매 상태마다 갈아 끼우면
   // 화면이 미세하게 흔들린다.
-  if (bannerWhy === (why || null) && banner.textContent === text && !banner.classList.contains('hidden')) return;
-  bannerWhy = why || null;
-  banner.className = kind;
-  banner.textContent = text;
-  banner.classList.remove('hidden');
+  var same = bannerWhy === (why || null)
+    && banner.textContent === text
+    && !banner.classList.contains('hidden');
+  if (!same) {
+    bannerWhy = why || null;
+    banner.className = kind;
+    banner.textContent = text;
+    banner.classList.remove('hidden');
+  }
+
+  // [이슈] 자동 숨김은 같은 배너를 다시 띄울 때도 반드시 다시 건다.
+  // 예전에는 위에서 글자가 같으면 바로 빠져나갔는데, 그때 이미 타이머를 꺼 놓은 뒤라
+  // 다시 거는 줄에 닿지 못했다. 같은 오류가 5초 안에 두 번 나면 배너가 영영 남았다.
   if (autoHideMs) {
-    bannerHideTimer = setTimeout(function () { banner.classList.add('hidden'); bannerHideTimer = null; }, autoHideMs);
+    bannerHideTimer = setTimeout(function () {
+      banner.classList.add('hidden');
+      bannerHideTimer = null;
+      bannerWhy = null;
+    }, autoHideMs);
   }
 }
 function hideBanner() {
