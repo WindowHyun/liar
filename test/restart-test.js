@@ -54,14 +54,21 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
 
 /** 설명 두 바퀴를 다 돌린다. */
 async function passTurns(ps) {
-  for (let i = 0; i < ps.length * 3 + 3; i += 1) {
+  // 바퀴 사이에 "다음 설명 할까요?" O/X가 끼어든다. 전원 찬성으로 넘기며 계속 돈다.
+  for (let i = 0; i < ps.length * 4 + 6; i += 1) {
     const sp = await speaker(ps);
-    if (!sp) break;
-    await sp.page.fill('#chat-input', `${sp.name}의 설명`);
-    await sp.page.press('#chat-input', 'Enter');
-    await wait(260);
+    if (sp) {
+      await sp.page.fill('#chat-input', `${sp.name}의 설명`);
+      await sp.page.press('#chat-input', 'Enter');
+      await wait(260);
+      continue;
+    }
+    if (await ps[0].page.locator('#live-block .chip[data-agree="yes"]').count()) {
+      await agreeToFreeChat(ps);
+      continue;
+    }
+    break;
   }
-  await agreeToFreeChat(ps);
 }
 
 /** 설명이 끝나면 뜨는 "자유 대화를 할까요?" O/X를 전원 찬성으로 통과시킨다. */

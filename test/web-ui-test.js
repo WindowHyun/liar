@@ -69,10 +69,25 @@ async function finishOneRound(pages) {
 
 /** 정해진 바퀴를 모두 돌아 설명 단계를 끝낸다. */
 async function finishExplanations(pages) {
-  for (let guard = 0; guard < pages.length * 3 + 3; guard += 1) {
-    if (!(await speakOnce(pages))) break;
+  // 바퀴 사이에 "다음 설명 할까요?" O/X가 끼어든다. 전원 찬성으로 통과시키며 계속 돈다.
+  for (let guard = 0; guard < pages.length * 4 + 6; guard += 1) {
+    if (await speakOnce(pages)) continue;
+    if (await agreeOnAsk(pages)) continue;
+    break;
   }
   await agreeToFreeChat(pages);
+}
+
+/** O/X가 떠 있으면 전원 찬성을 누른다. 눌렀으면 true. */
+async function agreeOnAsk(pages) {
+  if (!(await pages[0].page.locator('#live-block .chip[data-agree="yes"]').count())) return false;
+  for (const p of pages) {
+    // 절반을 넘는 순간 사라지므로 매번 다시 찾는다.
+    const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
+    if (await yes.count()) await yes.click().catch(() => {});
+    await wait(180);
+  }
+  return true;
 }
 
 /**
@@ -80,13 +95,7 @@ async function finishExplanations(pages) {
  * (그 O/X 자체를 보는 테스트는 이 도우미를 쓰지 않고 직접 누른다.)
  */
 async function agreeToFreeChat(pages) {
-  for (const p of pages) {
-    // 찬성이 절반을 넘는 순간 O/X가 사라지므로(3명이면 2명째에 끝난다), 매번 다시 찾는다.
-    // 붙잡아 둔 요소를 나중에 누르면 이미 다시 그려져서 "DOM에 없다"로 실패한다.
-    const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
-    if (await yes.count()) await yes.click().catch(() => {});
-    await wait(200);
-  }
+  await agreeOnAsk(pages);
   await pages[0].page.waitForFunction(
     () => document.querySelector('#live-block').textContent.includes('자유 대화 중'),
     null, { timeout: 5000 });
@@ -182,10 +191,17 @@ async function main() {
 
   // 한 바퀴를 다 돌면 자유 대화가 아니라 2차 설명으로 넘어간다
   await finishOneRound(pages);
+  // [규칙 변경] 한 바퀴가 끝나면 2차를 할지 먼저 묻는다.
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .chip', { timeout: 5000 })));
+  check('X3 [요청] 한 바퀴가 끝나면 다음 설명을 할지 묻는다',
+    (await p1.page.textContent('#chat-messages')).includes('2차 설명을 할까요?'));
+  check('X3 정하는 동안에는 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
+  await agreeOnAsk(pages);
+
   await p1.page.waitForFunction(
     () => (document.querySelector('#live-block .round-badge') || {}).textContent === '2차',
-    { timeout: 5000 });
-  check('X3 [규칙] 1차를 다 돌면 2차 설명으로 넘어간다 (자유 대화가 아니다)',
+    null, { timeout: 5000 });
+  check('X3 [규칙] 찬성하면 2차 설명으로 넘어간다 (자유 대화가 아니다)',
     (await p1.page.textContent('#chat-messages')).includes('2차 설명을 시작합니다'));
   check('X3 [규칙] 2차에서는 전원이 다시 대기 상태가 된다',
     !(await p1.page.textContent('#live-block .track')).includes('✅'),

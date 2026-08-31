@@ -136,6 +136,15 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   check('설명 단계에서는 투표를 제안할 수 없다', await p1.page.isDisabled('#vote-btn'));
 
   const used = {};
+  /** O/X에 전원 찬성. 절반을 넘는 순간 사라지므로 매번 다시 찾는다. */
+  async function agreeAll(ps) {
+    for (const p of ps) {
+      const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
+      if (await yes.count()) { await yes.click().catch(() => {}); log(`     ${p.name.padEnd(3)} : ✅`); }
+      await wait(200);
+    }
+  }
+
   async function playRound(roundNo) {
     log(`\n━━━━━━━━━━ ${roundNo}차 설명 ━━━━━━━━━━`);
     const badge = await p1.page.textContent('#live-block .round-badge');
@@ -168,9 +177,17 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   }
   await playRound(1);
   if (OUT) await p1.page.screenshot({ path: `${OUT}/02-round1.png` });
+
+  // [요청] 한 바퀴가 끝나면 다음 바퀴를 돌지 다 같이 O/X로 정한다.
+  log('\n━━━━━━━━━━ 2차 설명을 할까요? ━━━━━━━━━━');
+  await Promise.all(players.map((p) => p.page.waitForSelector('#live-block .chip', { timeout: 8000 })));
+  check('1차가 끝나면 2차를 할지 묻는다',
+    (await p1.page.textContent('#chat-messages')).includes('2차 설명을 할까요?'));
+  await agreeAll(players);
+
   await p1.page.waitForFunction(
     () => (document.querySelector('#live-block .round-badge') || {}).textContent === '2차', null, { timeout: 8000 });
-  check('1차를 다 돌면 2차로 넘어간다', true);
+  check('찬성하면 2차로 넘어간다', true);
   await playRound(2);
 
   // [요청] 설명이 끝나면 자유 대화를 할지 다 같이 O/X로 정한다.
@@ -181,12 +198,7 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   check('O/X를 정하는 동안에는 대화가 잠긴다', await p1.page.isDisabled('#chat-input'));
   if (OUT) await p1.page.screenshot({ path: `${OUT}/03-free-ask.png` });
 
-  for (const p of players) {
-    // 찬성이 절반을 넘는 순간 O/X가 사라지므로 매번 다시 찾는다.
-    const yes = p.page.locator('#live-block .chip[data-agree="yes"]');
-    if (await yes.count()) { await yes.click().catch(() => {}); log(`     ${p.name.padEnd(3)} : ✅`); }
-    await wait(200);
-  }
+  await agreeAll(players);
 
   await Promise.all(players.map((p) => p.page.waitForFunction(
     () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), null, { timeout: 8000 })));

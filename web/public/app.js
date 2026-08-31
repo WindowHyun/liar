@@ -423,6 +423,10 @@ function systemLine(m) {
   } else if (m.code === 'turnSkipped' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 설명 시간을 넘겼습니다.'));
+  } else if (m.code === 'nextRoundAsked') {
+    p.textContent = m.speakRound + '차 설명이 끝났습니다. ' + m.nextRound + '차 설명을 할까요?';
+  } else if (m.code === 'roundsSkipped') {
+    p.textContent = '설명을 여기서 마칩니다. (찬성 ' + m.agree + ' / 반대 ' + m.disagree + ')';
   } else if (m.code === 'freeAsked') {
     p.textContent = (m.speakRounds > 1 ? m.speakRounds + '차 설명까지 끝났습니다.' : '설명이 모두 끝났습니다.')
       + ' 자유 대화를 할까요?';
@@ -432,7 +436,7 @@ function systemLine(m) {
     p.textContent = '이제 자유롭게 이야기하세요. (1분)';
   } else if (m.code === 'votingStarted') {
     // 찬반을 거쳐 온 경우와, 자유 대화 시간이 다 돼서 그냥 넘어온 경우를 구분한다.
-    p.textContent = m.from === 'freeSkipped'
+    p.textContent = (m.from === 'freeSkipped' || m.from === 'roundsSkipped')
       ? '투표를 진행합니다.'
       : m.byProposal === false
         ? '자유 대화 시간이 끝났습니다. 투표를 진행합니다.'
@@ -646,7 +650,11 @@ function buildProposal(s) {
 
   var text = document.createElement('div');
   text.className = 'text';
-  if (p.kind === 'free') {
+  if (p.kind === 'nextRound') {
+    // 한 바퀴가 끝나고 "다음 바퀴를 돌까요?"를 묻는 경우.
+    text.appendChild(document.createTextNode(
+      s.round.speakRound + '차 설명이 끝났습니다. ' + (s.round.speakRound + 1) + '차 설명을 할까요?'));
+  } else if (p.kind === 'free') {
     // 설명을 다 돌고 나서 "자유 대화를 할까요?"를 묻는 경우. 제안한 사람이 없다.
     text.appendChild(document.createTextNode('설명이 모두 끝났습니다. 자유 대화를 할까요?'));
   } else {
@@ -690,9 +698,11 @@ function chip(value, emoji, count, picked) {
 function metaProposal(s) {
   var p = s.round.proposal;
   return '남은 시간 ' + secondsLeft(p.endsAt) + '초 · ' + p.total + '명 중 ' + (p.agree + p.disagree) + '명 응답'
-    + (p.kind === 'free'
-      ? ' · 찬성이 절반 이상이면 자유 대화, 아니면 바로 투표로 넘어갑니다'
-      : ' · 찬성이 절반 이상이면 투표로 넘어갑니다');
+    + (p.kind === 'nextRound'
+      ? ' · 찬성이 절반 이상이면 다음 설명, 아니면 바로 투표로 넘어갑니다'
+      : p.kind === 'free'
+        ? ' · 찬성이 절반 이상이면 자유 대화, 아니면 바로 투표로 넘어갑니다'
+        : ' · 찬성이 절반 이상이면 투표로 넘어갑니다');
 }
 
 function buildVote(s) {
@@ -934,6 +944,8 @@ function applyComposer(s) {
   } else if (s.phase === 'free') {
     locked = false;
     hint = '자유롭게 이야기하세요...';
+  } else if (s.phase === 'proposal' && s.round && s.round.proposal && s.round.proposal.kind === 'nextRound') {
+    hint = '다음 설명을 할지 정하는 중입니다';
   } else if (s.phase === 'proposal' && s.round && s.round.proposal && s.round.proposal.kind === 'free') {
     hint = '자유 대화를 할지 정하는 중입니다';
   } else {

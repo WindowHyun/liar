@@ -448,13 +448,56 @@ function createRoom(options) {
    */
   function nextSpeakRound() {
     if (round.speakRound >= TURN_ROUNDS) { askForFreeChat(); return; }
+    askForNextRound();
+  }
+
+  /**
+   * [요청] 한 바퀴가 끝나면 다음 바퀴를 돌지 다 같이 O/X로 정한다.
+   *
+   * 예전에는 1차가 끝나면 무조건 2차로 넘어갔다. 1차만으로 이미 갈린 판에서는
+   * 2차가 늘어지기만 해서, 할지 말지를 먼저 묻는다. 부결되면 자유 대화까지
+   * 건너뛰고 바로 투표다(요청대로).
+   */
+  function askForNextRound() {
+    clearPhaseTimer();
+    round.speakEndsAt = null;
+    round.proposal = {
+      kind: 'nextRound',
+      by: null,
+      byName: null,
+      answers: new Map(),
+      endsAt: now() + PROPOSAL_MS,
+    };
+    phase = 'proposal';
+    pushChat({ kind: 'system', code: 'nextRoundAsked', at: now(),
+      speakRound: round.speakRound, nextRound: round.speakRound + 1,
+      text: `${round.speakRound}차 설명이 끝났습니다. ${round.speakRound + 1}차 설명을 할까요?` });
+    phaseTimer = setTimer(() => { phaseTimer = null; settleProposal(true); }, PROPOSAL_MS);
+    changed();
+  }
+
+  /** 다음 바퀴를 실제로 시작한다(O/X가 가결된 경우). */
+  function beginNextSpeakRound() {
+    clearPhaseTimer();
+    round.proposal = null;
     round.speakRound += 1;
     round.speakOrder = withoutBackToBack(shuffle(round.roster.map((r) => r.id)), round.lastSpokenId);
     round.speakIndex = 0;
     round.spoken = new Set();
+    phase = 'turn';
     pushChat({ kind: 'system', code: 'speakRoundStart', at: now(), speakRound: round.speakRound,
       text: `${round.speakRound}차 설명을 시작합니다.` });
     beginTurn();
+  }
+
+  /** 남은 설명 바퀴와 자유 대화를 모두 건너뛰고 바로 투표로 간다(요청). */
+  function skipRemainingRounds() {
+    clearPhaseTimer();
+    const { agree, disagree } = proposalCounts();
+    round.proposal = null;
+    pushChat({ kind: 'system', code: 'roundsSkipped', agree, disagree, at: now(),
+      text: `설명을 여기서 마칩니다. (찬성 ${agree} / 반대 ${disagree})` });
+    beginVoting('roundsSkipped');
   }
 
   /** 지금 차례인 사람에게 대화권을 준다. 이미 나간 사람은 건너뛴다. */
@@ -645,11 +688,20 @@ function createRoom(options) {
     if (total <= 0) { changed(); return; }
 
     // 무엇을 물었는지에 따라 가결/부결이 가리키는 곳이 다르다.
-    //   투표 제안 : 가결 → 투표      / 부결 → 자유 대화로 돌아감
+    //   다음 설명 : 가결 → 다음 바퀴 / 부결 → 설명도 자유 대화도 건너뛰고 투표
     //   자유 대화 : 가결 → 자유 대화 / 부결 → 자유 대화를 건너뛰고 투표
-    const asksFreeChat = round.proposal.kind === 'free';
-    const passed = () => { if (asksFreeChat) beginFree(); else beginVoting(); };
-    const failed = () => { if (asksFreeChat) skipFreeChat(); else rejectProposal(); };
+    //   투표 제안 : 가결 → 투표      / 부결 → 자유 대화로 돌아감
+    const asks = round.proposal.kind;
+    const passed = () => {
+      if (asks === 'nextRound') beginNextSpeakRound();
+      else if (asks === 'free') beginFree();
+      else beginVoting();
+    };
+    const failed = () => {
+      if (asks === 'nextRound') skipRemainingRounds();
+      else if (asks === 'free') skipFreeChat();
+      else rejectProposal();
+    };
 
     if (agree * 2 >= total) { passed(); return; }
     if (disagree * 2 > total) { failed(); return; }
@@ -690,7 +742,7 @@ function createRoom(options) {
     pushChat({ kind: 'system', code: 'votingStarted', byProposal: from === 'proposal', from, agree, disagree,
       text: from === 'proposal'
         ? `투표를 진행합니다. (찬성 ${agree} / 반대 ${disagree})`
-        : from === 'freeSkipped'
+        : (from === 'freeSkipped' || from === 'roundsSkipped')
           ? '투표를 진행합니다.'
           : '자유 대화 시간이 끝났습니다. 투표를 진행합니다.',
       at: now() });
