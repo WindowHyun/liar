@@ -14,7 +14,7 @@
  */
 
 const path = require('path');
-const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell } = require('electron');
 const { createPeer, DEFAULT_PORT } = require('./peer');
 const { createUiServer } = require('./ui-server');
 const { log, error, LOG_PATH } = require('../logger');
@@ -22,9 +22,17 @@ const { log, error, LOG_PATH } = require('../logger');
 const PORT = Number(process.env.LIAR_PORT) || DEFAULT_PORT;
 
 let mainWindow = null;
+let splashWindow = null;
+let tray = null;
+let blinkTimer = null;
 let peer = null;
 let uiServer = null;
 let uiPort = null;
+
+// [요청] 창을 내려 둔 사이에 온 것을 알린다. 트레이 아이콘이 깜빡이는 주기.
+const BLINK_MS = 600;
+// 로딩 화면을 너무 빨리 지우면 번쩍하고 만다. 최소 이만큼은 보여준다.
+const SPLASH_MIN_MS = 700;
 
 function sendStatus(status) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -35,6 +43,103 @@ function sendStatus(status) {
 function sendNotice(notice) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('notice', notice);
+}
+
+/**
+ * [요청] 창을 내려 둔 사이에 대화가 오거나 내 차례가 되면 알린다.
+ *
+ * 두 가지를 같이 쓴다. 작업 표시줄 깜빡임(flashFrame)은 Windows가 "주목해 달라"는
+ * 표준 방식이고, 트레이 아이콘 깜빡임은 작업 표시줄을 숨겨 둔 사람에게도 보인다.
+ * 트레이 아이콘은 눌러서 창을 다시 여는 통로이기도 하다.
+ *
+ * 창을 다시 보는 순간(focus/restore/show) 둘 다 끈다.
+ */
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
+  if (icon.isEmpty()) return; // 아이콘을 못 읽으면 트레이 없이 간다(앱은 계속 돈다)
+  // 트레이는 작은 아이콘이다. 원본 그대로 넣으면 OS에 따라 뭉개진다.
+  tray = new Tray(icon.resize({ width: 16, height: 16 }));
+  log('[Electron] 트레이 아이콘 준비');
+  tray.setToolTip('Slack');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '열기', click: showMainWindow },
+    { type: 'separator' },
+    { label: '종료', click: () => { app.quit(); } },
+  ]));
+  tray.on('click', showMainWindow);
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** 창이 이미 눈앞에 있으면 알릴 이유가 없다. */
+function needsAttention() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  return mainWindow.isMinimized() || !mainWindow.isVisible() || !mainWindow.isFocused();
+}
+
+function startAttention() {
+  if (!needsAttention()) return;
+  mainWindow.flashFrame(true);
+  if (!tray || blinkTimer) return;
+  const onIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 16, height: 16 });
+  const offIcon = nativeImage.createEmpty();
+  let on = false;
+  blinkTimer = setInterval(() => {
+    on = !on;
+    try { tray.setImage(on ? offIcon : onIcon); } catch { /* 트레이가 사라진 뒤 */ }
+  }, BLINK_MS);
+}
+
+function stopAttention() {
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(false);
+  if (!tray) return;
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
+  try { tray.setImage(icon.resize({ width: 16, height: 16 })); } catch { /* 트레이가 사라진 뒤 */ }
+}
+
+/**
+ * [요청] 앱을 켜면 곧바로 뜨는 로딩 화면.
+ *
+ * 예전에는 창이 뜨고 나서 화면이 그려질 때까지 흰 화면이 잠깐 남았다. 그 사이
+ * 사용자는 앱이 켜진 건지 알 수 없다. 본 창은 준비될 때까지 숨겨 두고(show:false)
+ * 이 창을 먼저 보여준 뒤, 본 화면이 다 그려지면 바꿔치기한다.
+ *
+ * 화면 서버(127.0.0.1)로 띄운다. file://로 띄우면 CSP에 걸려 스타일이 죽는다.
+ */
+function createSplash() {
+  splashWindow = new BrowserWindow({
+    width: 380,
+    height: 260,
+    frame: false,
+    resizable: false,
+    movable: false,
+    show: false,
+    center: true,
+    skipTaskbar: true,
+    backgroundColor: '#3F0E40',
+    title: 'Slack',
+    icon: path.join(__dirname, 'icon.png'),
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  splashWindow.loadURL(`http://127.0.0.1:${uiPort}/loading.html`);
+  splashWindow.once('ready-to-show', () => {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    splashWindow.show();
+    log('[Electron] 로딩 화면 표시');
+  });
+}
+
+function closeSplash() {
+  if (!splashWindow || splashWindow.isDestroyed()) { splashWindow = null; return; }
+  splashWindow.destroy();
+  splashWindow = null;
+  log('[Electron] 로딩 화면 닫음 - 본 화면으로');
 }
 
 function createWindow() {
@@ -51,6 +156,8 @@ function createWindow() {
     minWidth: 820,
     minHeight: 560,
     title: 'Slack',
+    // 로딩 화면을 먼저 보여주고, 다 그려지면 이 창으로 바꾼다.
+    show: false,
     autoHideMenuBar: true,
     backgroundColor: '#F5F5F7',
     webPreferences: {
@@ -70,9 +177,25 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  const openedAt = Date.now();
   mainWindow.webContents.on('did-finish-load', () => {
     if (peer) sendStatus(peer.status());
+    // 로딩 화면이 번쩍하고 사라지지 않게 최소 시간은 채운다.
+    const wait = Math.max(0, SPLASH_MIN_MS - (Date.now() - openedAt));
+    setTimeout(() => {
+      closeSplash();
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+    }, wait);
   });
+
+  // 화면을 못 띄우는 상황에서도 창은 반드시 보여야 한다. 로딩 화면에 갇히지 않게.
+  mainWindow.webContents.on('did-fail-load', () => {
+    closeSplash();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
+
+  // 창을 다시 보면 알림을 끈다.
+  for (const ev of ['focus', 'restore', 'show']) mainWindow.on(ev, stopAttention);
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -141,6 +264,8 @@ app.whenReady().then(async () => {
   peer.start();
   log(`[Electron] 시작 (게임 포트 ${PORT}, 화면 포트 ${uiPort}, 로그: ${LOG_PATH})`);
 
+  createSplash();   // 본 창이 준비될 때까지 이걸 보여준다
+  createTray();
   createWindow();
 
   app.on('activate', () => {
@@ -150,7 +275,14 @@ app.whenReady().then(async () => {
 
 ipcMain.handle('get-status', () => (peer ? peer.status() : null));
 
+// [요청] 화면이 "알릴 만한 일이 생겼다"고 알려 온다(대화 도착 / 내 차례).
+// 창이 눈앞에 있으면 startAttention()이 알아서 무시한다.
+ipcMain.on('attention', () => { startAttention(); });
+
 app.on('window-all-closed', async () => {
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+  if (tray) { tray.destroy(); tray = null; }
+  closeSplash();
   if (peer) await peer.stop();
   if (uiServer) uiServer.stop();
   app.quit();

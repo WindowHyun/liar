@@ -40,4 +40,7 @@ contextBridge.exposeInMainWorld('liar', {
   getServer: () => serverUrl,
   onServerChange: (fn) => { if (typeof fn === 'function') listeners.push(fn); },
   onNotice: (fn) => { if (typeof fn === 'function') noticeListeners.push(fn); },
+  // [요청] 창을 내려 둔 사이에 대화가 오거나 내 차례가 되면 알린다.
+  // 창이 눈앞에 있는지는 메인 쪽에서 판단하므로, 화면은 그냥 알리기만 하면 된다.
+  notifyAttention: () => { ipcRenderer.send('attention'); },
 });

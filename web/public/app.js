@@ -34,6 +34,9 @@ var tickTimer = null;
 var everConnected = false; // [E-1] 첫 접속과 호스트 인계를 구분하기 위해
 var serverOffset = 0;      // 서버 시계 - 내 시계. 남은 시간을 정확히 세기 위해.
 var lastChatKey = '';       // 대화를 다시 그릴지 판단하는 지문
+// [요청] 창을 내려 둔 사이에 온 것을 알리기 위한 직전 값. 처음 그릴 때는 알리지 않는다.
+var lastNotifiedSeq = null;
+var wasMyTurn = false;
 // [E-3] 연결 감시. 사내망에서 조용한 연결이 끊기거나, 끊긴 줄도 모르고 있는 것을 막는다.
 var PING_MS = 20000;       // 살아 있는지 물어보는 주기
 var SILENCE_MS = 50000;    // 이만큼 아무 소식이 없으면 죽은 연결로 보고 다시 붙는다
@@ -238,6 +241,8 @@ function leaveRoom() {
   myNickname = '';
   state = null;
   lastChatKey = '';
+  lastNotifiedSeq = null;
+  wasMyTurn = false;
   liveSignature = '';
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   $('chat-messages').innerHTML = '';
@@ -930,6 +935,38 @@ function applyComposer(s) {
   document.getElementById('composer').classList.toggle('my-turn', !locked && s.phase === 'turn');
 }
 
+/**
+ * [요청] 창을 내려 둔 사이에 대화가 오거나 내 차례가 되면 트레이/작업 표시줄로 알린다.
+ *
+ * Electron에서만 동작한다(브라우저에는 트레이가 없다). 창이 눈앞에 있는지는 메인 쪽에서
+ * 판단하므로 여기서는 "알릴 만한 일"만 가린다.
+ *   - 남이 친 대화가 새로 왔을 때 (내가 친 것은 제외)
+ *   - 내 차례가 아니었다가 내 차례가 됐을 때
+ */
+function notifyIfWorthIt(s) {
+  if (!window.liar || typeof window.liar.notifyAttention !== 'function') return;
+
+  var last = s.chat.length ? s.chat[s.chat.length - 1] : null;
+  var seq = last ? last.seq : 0;
+  var myTurn = !!(s.you && s.you.myTurn);
+
+  // 처음 그리는 순간에는 이미 쌓여 있던 것뿐이라 알리지 않는다.
+  if (lastNotifiedSeq === null) {
+    lastNotifiedSeq = seq;
+    wasMyTurn = myTurn;
+    return;
+  }
+
+  var newChat = seq > lastNotifiedSeq && last && last.kind === 'chat' && last.id !== myId;
+  var turnCameToMe = myTurn && !wasMyTurn;
+  lastNotifiedSeq = seq;
+  wasMyTurn = myTurn;
+
+  if (newChat || turnCameToMe) {
+    try { window.liar.notifyAttention(); } catch (e) { /* 알림은 없어도 게임은 돈다 */ }
+  }
+}
+
 function render(s) {
   state = s;
   if (s.you) myId = s.you.id;
@@ -955,6 +992,8 @@ function render(s) {
     // 조용히 삼키지 않는다. 화면은 계속 쓸 수 있게 두되, 원인은 남긴다.
     console.error('화면을 그리는 중 문제가 생겼습니다:', err);
   }
+
+  notifyIfWorthIt(s);
 
   var lobbyish = s.phase === 'lobby' || s.phase === 'result';
   $('start-btn').disabled = !s.canStart;

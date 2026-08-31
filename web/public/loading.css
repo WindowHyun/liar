@@ -1,0 +1,24 @@
+/* 앱을 켤 때 잠깐 뜨는 화면. index.html과 같은 팔레트를 쓴다.
+   CSP(style-src 'self')가 걸려 있어 인라인 <style>은 막히므로 파일로 둔다. */
+* { box-sizing: border-box; }
+html, body { height:100%; }
+body {
+  margin:0; display:flex; align-items:center; justify-content:center;
+  font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+  background:#3F0E40; color:#fff; user-select:none; cursor:default;
+}
+.box { text-align:center; padding:0 24px; }
+.mark { width:64px; height:64px; margin:0 auto 18px; display:block; }
+h1 { font-size:20px; margin:0 0 6px; font-weight:700; letter-spacing:-.2px; }
+p { font-size:13px; margin:0; color:#D1B3D6; }
+
+/* 점 세 개가 차례로 밝아진다. 진행률을 아는 척하지 않으면서 살아 있다는 것만 보여준다. */
+.dots { margin-top:22px; display:flex; gap:7px; justify-content:center; }
+.dots i { width:7px; height:7px; border-radius:50%; background:#8D6C93; animation:pulse 1.2s infinite; }
+.dots i:nth-child(2) { animation-delay:.2s; }
+.dots i:nth-child(3) { animation-delay:.4s; }
+@keyframes pulse { 0%,60%,100% { opacity:.35; } 30% { opacity:1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dots i { animation:none; opacity:.7; }
+}

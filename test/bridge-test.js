@@ -14,6 +14,7 @@
  */
 
 const { createGameServer } = require('../web/game-server');
+const { createUiServer } = require('../electron/ui-server');
 
 let chromium;
 try {
@@ -47,6 +48,8 @@ const BRIDGE = `
     getServer: function () { return window.__server; },
     onServerChange: function (fn) { window.__listeners.push(fn); },
   };
+  window.__attention = 0;
+  window.liar.notifyAttention = function () { window.__attention += 1; };
   window.__setServer = function (url) {
     window.__server = url;
     window.__listeners.forEach(function (fn) { fn(url); });
@@ -109,7 +112,95 @@ async function main() {
 
   check('B5 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 
+  await loadingScreen();
+
   await roundInProgressHandover();
+  await attentionWhileAway();
+}
+
+/**
+ * B7 [요청] 창을 내려 둔 사이에 대화가 오거나 내 차례가 되면 알린다.
+ *
+ * 실제로 트레이가 깜빡이는지는 메인 프로세스 일이라 여기서 볼 수 없다. 여기서 고정하는 것은
+ * 화면이 "알려 달라"고 부르는 조건이다 - 이걸 잘못 잡으면 내가 친 글에도 깜빡이거나
+ * (시끄럽다), 정작 남의 글에는 조용하다(놓친다).
+ */
+async function attentionWhileAway() {
+  const PORT_E = 4185;
+  const host = createGameServer({ port: PORT_E });
+  await host.start();
+
+  const pages = [];
+  for (const name of ['가', '나']) {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.addInitScript(BRIDGE);
+    await page.goto(`http://127.0.0.1:${PORT_E}`);
+    await page.evaluate((u) => window.__setServer(u), `ws://127.0.0.1:${PORT_E}`);
+    await page.fill('#nickname-input', name);
+    await page.click('#join-btn');
+    pages.push({ name, ctx, page });
+  }
+  const [me, other] = pages;
+  await me.page.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 2, null, { timeout: 5000 });
+
+  // 처음 그릴 때는 이미 쌓여 있던 것뿐이라 알리지 않아야 한다.
+  check('B7 처음 들어왔을 때는 알리지 않는다',
+    (await me.page.evaluate(() => window.__attention)) === 0,
+    String(await me.page.evaluate(() => window.__attention)));
+
+  // 남이 친 대화 → 알린다
+  await me.page.evaluate(() => { window.__attention = 0; });
+  await other.page.fill('#chat-input', '안녕하세요');
+  await other.page.press('#chat-input', 'Enter');
+  await me.page.waitForFunction(() => document.querySelector('#chat').textContent.includes('안녕하세요'), null, { timeout: 5000 });
+  check('B7 [요청] 남이 친 대화가 오면 알린다',
+    (await me.page.evaluate(() => window.__attention)) > 0);
+
+  // 내가 친 대화 → 알리지 않는다 (내 손으로 친 것에 깜빡이면 시끄럽기만 하다)
+  await me.page.evaluate(() => { window.__attention = 0; });
+  await me.page.fill('#chat-input', '제가 씁니다');
+  await me.page.press('#chat-input', 'Enter');
+  await me.page.waitForFunction(() => document.querySelector('#chat').textContent.includes('제가 씁니다'), null, { timeout: 5000 });
+  await wait(300);
+  check('B7 내가 친 대화로는 알리지 않는다',
+    (await me.page.evaluate(() => window.__attention)) === 0,
+    String(await me.page.evaluate(() => window.__attention)));
+
+  // 내 차례가 되면 알린다
+  for (const p of pages) await p.page.evaluate(() => { window.__attention = 0; });
+  await me.page.click('#start-btn');
+  await Promise.all(pages.map((p) => p.page.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 })));
+  await wait(400);
+  const speaker = (await me.page.locator('#composer.my-turn').count()) ? me : other;
+  check('B7 [요청] 내 차례가 되면 알린다',
+    (await speaker.page.evaluate(() => window.__attention)) > 0,
+    `${speaker.name}의 알림 ${await speaker.page.evaluate(() => window.__attention)}회`);
+
+  for (const p of pages) await p.ctx.close();
+  await host.stop();
+}
+
+/**
+ * B8 [요청] 앱을 켜면 뜨는 로딩 화면.
+ *
+ * 메인 프로세스가 이 페이지를 화면 서버로 띄운다. 여기서는 그 페이지가 실제로 내려오고
+ * 글자가 보이는지만 본다(빈 화면이 뜨면 로딩이 아니라 고장으로 보인다).
+ */
+async function loadingScreen() {
+  // 실제 앱에서 이 페이지를 내려주는 것은 게임 서버가 아니라 화면 서버다. 같은 걸 띄운다.
+  const ui = createUiServer();
+  const port = await ui.start();
+  const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${port}/loading.html`);
+  const text = await page.textContent('body');
+  check('B8 로딩 화면이 내려온다', text.includes('찾는 중'), text.replace(/\s+/g, ' ').trim().slice(0, 60));
+  check('B8 로딩 화면에 스타일이 먹는다',
+    (await page.evaluate(() => getComputedStyle(document.body).backgroundColor)) === 'rgb(63, 14, 64)',
+    await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+  check('B8 점 세 개가 그려진다', (await page.locator('.dots i').count()) === 3);
+  await page.close();
+  ui.stop();
 }
 
 /**
