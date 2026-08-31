@@ -197,7 +197,8 @@ function createPeer(options) {
 
     async stop() {
       if (electionTimer) { clearInterval(electionTimer); electionTimer = null; }
-      if (discovery) { discovery.stop(); discovery = null; }
+      // 작별 인사를 실제로 내보낸 뒤에 닫는다. 안 기다리면 인사가 나가기 전에 프로세스가 끝난다.
+      if (discovery) { await discovery.stop(); discovery = null; }
       if (gameServer) { await gameServer.stop(); gameServer = null; }
       hosting = false;
     },

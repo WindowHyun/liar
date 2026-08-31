@@ -896,8 +896,72 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w37_twoSpeakRounds, w38_secondRoundStillOnePerPerson,
   w39_departedVotesAreDropped, w40_votesForDepartedAreDropped, w41_departedProposalAnswerIsDropped,
   w42_duplicateNicknames, w43_nicknameEdgeCases, w44_systemLinesSurviveFlooding,
-  w45_wordListIsValidated]) {
+  w45_wordListIsValidated,
+  w46_lastLeaverResetsTheRoom, w47_emptyRoomResetsAfterDisconnectGrace,
+  w48_newGroupStartsClean]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
+}
+
+
+// ── 마지막 사람이 나가면 방이 비워지는가 ────────────────────────────────
+
+function w46_lastLeaverResetsTheRoom() {
+  // [이슈] "모든 인원이 다 나가도 방이 안 터진다"
+  //   판이 끝나면 phase가 'result'가 되는데, abandonRoundIfAlone()은 'result'를
+  //   건너뛴다. 그래서 그 뒤에 전원이 나가도 방이 남의 판 결과를 그대로 안고 남았다.
+  //   다음에 들어온 사람은 한 번도 하지 않은 판의 결과 화면을 보게 된다 -
+  //   제시어와 누가 라이어였는지까지 그대로.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  const [a, b, c] = idsOf(players);
+
+  room.leave(a); // 라이어가 나간다 → 시민 승, phase='result'
+  check('W46 라이어가 나가 판이 결과로 끝났다', room._debug().phase === 'result');
+
+  room.leave(b);
+  room.leave(c);
+
+  const s = room.stateFor('아무도아님');
+  check('W46 [이슈] 전원이 나가면 방이 로비로 돌아온다', s.phase === 'lobby', s.phase);
+  check('W46 앞 판의 결과가 남지 않는다', s.result === null,
+    s.result ? JSON.stringify(s.result) : '없음');
+  check('W46 앞 사람들의 대화가 남지 않는다', s.chat.length === 0, `${s.chat.length}줄`);
+  check('W46 앞 사람들의 전적이 남지 않는다', s.record.rounds === 0, JSON.stringify(s.record));
+}
+
+function w47_emptyRoomResetsAfterDisconnectGrace() {
+  // 스스로 나가지 않고 전원이 튕긴 경우도 같다. 10초 유예가 지나 목록에서
+  // 사라지는 순간이 "아무도 없는 방"이 되는 시점이다.
+  const { room, players } = makeRoom(['A', 'B'], 0);
+  room.start();
+  const [a, b] = idsOf(players);
+
+  room.disconnect(a);
+  room.disconnect(b);
+  check('W47 유예 중에는 아직 비우지 않는다', room.playerIds().length === 2);
+
+  advance(room.DROP_MS + 1000);
+  const s = room.stateFor('아무도아님');
+  check('W47 유예가 지나 전원이 사라지면 방이 비워진다',
+    s.phase === 'lobby' && s.chat.length === 0 && s.record.rounds === 0,
+    `phase=${s.phase} chat=${s.chat.length} 전적=${s.record.rounds}`);
+}
+
+function w48_newGroupStartsClean() {
+  // 방이 비워진 뒤 새로 들어온 사람들이 곧바로, 깨끗한 상태에서 시작할 수 있어야 한다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  room.start();
+  for (const id of idsOf(players)) room.leave(id);
+
+  const x = room.join({ nickname: '새사람1' }).playerId;
+  room.join({ nickname: '새사람2' });
+  const before = room.stateFor(x);
+  check('W48 새로 들어온 사람은 빈 방을 본다',
+    before.phase === 'lobby' && before.chat.length === 0 && before.result === null);
+  check('W48 곧바로 시작할 수 있다', before.canStart === true);
+
+  const reason = room.start();
+  check('W48 새 판이 정상적으로 시작된다', !reason && room._debug().phase === 'turn', reason || '');
 }
 
 const failed = results.filter((r) => !r.ok).length;

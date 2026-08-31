@@ -14,6 +14,7 @@
  *   D8 호스트가 랜선+와이파이로 동시에 붙어 있어도 붙을 주소가 흔들리지 않는다
  *   D9 게임 포트를 다른 프로그램이 쥐고 있으면 조용히 멈추지 않고 알린다
  *   D4 호스트가 갑자기 나가면 남은 인스턴스가 이어받고 다시 한 명으로 수렴한다
+ *   D10 호스트가 정상적으로 앱을 닫으면 타임아웃을 기다리지 않고 곧바로 인계된다
  *
  * 실행: node test/discovery-test.js
  */
@@ -24,7 +25,7 @@ const os = require('os');
 const dgram = require('dgram');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const { createDiscovery, DISCOVERY_VERSION, ADDRESS_STICKY_MS } = require('../electron/discovery');
+const { createDiscovery, DISCOVERY_VERSION, ADDRESS_STICKY_MS, HOST_TIMEOUT_MS } = require('../electron/discovery');
 
 // 실제 앱(55500)과 겹치면 돌고 있는 인스턴스를 4번째 참가자로 잡아 버린다.
 // 테스트는 전용 포트를 쓴다.
@@ -183,6 +184,51 @@ async function main() {
 
   await addressFlapping();
   await portBusy();
+  await gracefulHostExit();
+}
+
+/**
+ * D10 호스트가 앱을 정상적으로 닫고 나갔을 때.
+ *
+ * [이슈] "모든 인원이 다 나가면 못 들어오고 아예 다른 방이 생성된다"
+ *   나가는 쪽이 아무 말 없이 사라지면, 남은 PC들은 타임아웃이 찰 때까지 기다린다.
+ *   호스트는 그 시간이 HOST_TIMEOUT_MS(21초)다. 그동안 전원의 화면은 이미 죽은
+ *   주소로 계속 접속을 시도하고(= 안 들어가짐), 21초가 지나서야 다른 PC가 서버를
+ *   새로 켠다(= 갑자기 다른 방이 생김).
+ *   나가면서 한 마디만 하면 이 21초가 사라진다.
+ *
+ * 갑자기 죽는 경우(D4, SIGKILL)는 인사할 방법이 없으므로 그대로 타임아웃을 쓴다.
+ * 여기서는 정상 종료(SIGTERM)만 본다.
+ */
+async function gracefulHostExit() {
+  const EXIT_PORT = PORT + 5;
+  const x = launch('X', EXIT_PORT);
+  const y = launch('Y', EXIT_PORT);
+  const pair = [x, y];
+
+  await until('두 인스턴스가 호스트를 정함',
+    () => pair.every((p) => p.status && p.status.serverUrl) && new Set(hostsOf(pair)).size === 1, 15000);
+
+  const host = pair.find((p) => p.status && p.status.isHost);
+  const survivor = pair.find((p) => p !== host);
+  check('D10 호스트가 정해졌다', !!host && !!survivor);
+  if (!host || !survivor) return;
+
+  const before = host.status.hostId;
+  const startedAt = Date.now();
+  host.child.kill('SIGTERM'); // 앱을 정상적으로 닫는다 (창 닫기와 같은 경로)
+
+  const takenOver = await until('남은 쪽이 이어받음',
+    () => survivor.status && survivor.status.isHost && survivor.status.hostId !== before,
+    HOST_TIMEOUT_MS + 15000);
+  const elapsed = Date.now() - startedAt;
+
+  check('D10 남은 쪽이 이어받는다', takenOver, `${(elapsed / 1000).toFixed(1)}초`);
+  // 인사를 안 하면 타임아웃을 꼬박 기다린다(단독 측정 20초, 다른 테스트와 같이 돌 때 6~7초).
+  // 인사를 하면 선출 주기(1초) 안에 끝난다. 3초는 그 사이를 넉넉히 가른다.
+  check('D10 [이슈] 타임아웃을 기다리지 않는다',
+    takenOver && elapsed < 3000, `${(elapsed / 1000).toFixed(1)}초 (인사가 없으면 6초 이상)`);
+  check('D10 이어받은 서버에 실제로 붙을 수 있다', await canConnect(EXIT_PORT));
 }
 
 /**

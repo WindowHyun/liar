@@ -157,6 +157,33 @@ function createRoom(options) {
   }
 
   /**
+   * 마지막 사람이 나가면 방을 처음 상태로 되돌린다.
+   *
+   * 예전에는 아무것도 하지 않았다. 판이 끝난 뒤(phase가 'result') 전원이 나가면
+   * abandonRoundIfAlone()은 'result'를 건너뛰도록 되어 있어서, 방이 남의 판 결과를
+   * 그대로 안고 텅 빈 채로 남았다. 그 뒤에 들어온 사람은 한 번도 하지 않은 판의
+   * 결과 화면 - 제시어와 누가 라이어였는지까지 - 을 그대로 보게 된다.
+   * 앞 사람들의 대화와 전적도 남는다.
+   *
+   * 아무도 없는 방은 새 방과 같아야 한다. 그래서 여기서 전부 지운다.
+   * (끊긴 사람은 DROP_MS 동안 목록에 남으므로, 잠깐 튕긴 것만으로는 여기 오지 않는다.)
+   */
+  function resetIfEmpty() {
+    if (players.size > 0) return false;
+    clearPhaseTimer();
+    round = null;
+    result = null;
+    phase = 'lobby';
+    chat.length = 0;
+    chatSeq = 0;
+    recentWords.length = 0;
+    record.rounds = 0;
+    record.liarWins = 0;
+    record.citizenWins = 0;
+    return true;
+  }
+
+  /**
    * 라이어가 빠진 판은 성립하지 않는다. 남은 사람끼리 계속해 봐야 아무도 라이어가 아니고,
    * 예전에는 그대로 진행돼서 "도망간 라이어 승"으로 전적까지 쌓였다.
    * 도망친 것은 진 것으로 본다 - 시민 승. 그래야 불리해진 라이어가 창을 닫아 버리지 않는다.
@@ -282,6 +309,7 @@ function createRoom(options) {
       players.delete(playerId);
       forgetFromRound(playerId);
       // 이 사람이 마지막이었을 수도, 라이어였을 수도 있다.
+      if (resetIfEmpty()) { changed(); return; }
       if (endRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
       if (phase === 'voting') maybeTally();
       else changed();
@@ -312,6 +340,8 @@ function createRoom(options) {
     if (round) round.seats.delete(player.token);
     forgetFromRound(playerId);
 
+    // 마지막 한 명이었으면 방을 통째로 비운다. 줄 승리도, 접을 판도 없다.
+    if (resetIfEmpty()) { changed(); return; }
     // 라이어가 나갔거나 혼자 남았으면 여기서 판이 끝난다(round가 null이 되므로 아래는 건너뛴다).
     if (endRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
 

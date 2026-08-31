@@ -44,6 +44,10 @@ const HOST_TIMEOUT_MS = 21000;
 // 쓰던 주소가 아직 살아 있으면 그대로 둔다. 이 시간만큼 그 주소가 조용하면 그때 갈아탄다
 // (공유기가 IP를 새로 준 경우처럼 진짜로 바뀐 상황).
 const ADDRESS_STICKY_MS = 6000;
+// 나갈 때 보내는 작별 인사. UDP라 한 번은 흘릴 수 있어 몇 번 보내고,
+// 앱을 닫는 길목이라 이 시간을 넘겨서까지 기다리지는 않는다.
+const GOODBYE_TRIES = 3;
+const GOODBYE_WAIT_MS = 300;
 
 function getLocalIPv4Interfaces() {
   const result = [];
@@ -97,6 +101,7 @@ function createDiscovery(options) {
     if (!sock) {
       sock = dgram.createSocket('udp4');
       sock.__ready = false;
+      sock.__broadcast = broadcast;
       sockets.set(key, sock);
       sock.on('error', (err) => {
         // 흔한 원인: 방화벽/보안에이전트가 이 프로세스의 아웃바운드를 막은 경우.
@@ -151,6 +156,47 @@ function createDiscovery(options) {
     }
   }
 
+  /**
+   * 나가면서 "나 갔다"고 알린다.
+   *
+   * 이게 없으면 조용히 사라지는 수밖에 없고, 남은 PC들은 타임아웃이 찰 때까지 기다린다.
+   * 호스트는 그 시간이 HOST_TIMEOUT_MS(21초)라, 호스트가 앱을 정상적으로 닫고 나가도
+   * 21초 동안 아무도 서버를 켜지 않는다. 그동안 전원의 화면은 죽은 주소로 계속
+   * 접속을 시도하고(= 안 들어가짐), 21초가 지나서야 다른 PC가 빈 서버를 새로 켠다
+   * (= 갑자기 다른 방이 생김). 한 마디만 하고 나가면 이 21초가 사라진다.
+   *
+   * UDP라 도착이 보장되지 않으므로 몇 번 보낸다. 못 받은 쪽은 예전처럼 타임아웃으로
+   * 정리하므로, 이 인사는 "빠르면 좋은 것"이지 없으면 깨지는 것이 아니다.
+   *
+   * v(버전)는 그대로 둔다. 올리면 이전 버전과 서로를 아예 못 보게 되어 더 나쁘다.
+   * 이 패킷을 모르는 예전 버전은 평범한 알림으로 읽는데, isHost가 빠져 있어서
+   * 호스트가 아닌 것으로 보고 7초 뒤에 정리한다 - 21초보다는 낫다.
+   */
+  function sayGoodbye() {
+    const data = Buffer.from(JSON.stringify({ v: DISCOVERY_VERSION, nodeId, bye: true }), 'utf-8');
+    const ready = [...sockets.values()].filter((sock) => sock.__ready);
+    if (ready.length === 0) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      let left = ready.length * GOODBYE_TRIES;
+      let done = false;
+      const finish = () => { if (done) return; done = true; resolve(); };
+      // 하나라도 걸리면 종료가 늦어진다. 앱을 닫는 길목이라 오래 붙잡지 않는다.
+      const guard = setTimeout(finish, GOODBYE_WAIT_MS);
+      if (typeof guard.unref === 'function') guard.unref();
+
+      for (const sock of ready) {
+        for (let i = 0; i < GOODBYE_TRIES; i += 1) {
+          // 목적지는 알림과 같은 곳(그 소켓이 쓰던 브로드캐스트 주소)이다.
+          sock.send(data, port, sock.__broadcast, () => {
+            left -= 1;
+            if (left <= 0) { clearTimeout(guard); finish(); }
+          });
+        }
+      }
+    });
+  }
+
   function sweep() {
     const now = Date.now();
     let changed = false;
@@ -186,6 +232,15 @@ function createDiscovery(options) {
           mismatchReported = msg.v;
           warn(`[버전 불일치] ${rinfo.address}의 버전 ${msg.v} != 내 버전 ${DISCOVERY_VERSION} - 참가자로 세지 않습니다`);
           onVersionMismatch({ peerVersion: msg.v, myVersion: DISCOVERY_VERSION, address: rinfo.address });
+        }
+        return;
+      }
+
+      // 나간다고 알려 온 경우. 타임아웃을 기다리지 않고 바로 지운다.
+      if (msg.bye === true) {
+        if (peers.delete(msg.nodeId)) {
+          log(`[발견] ${msg.nodeId}가 나갔다고 알려 왔습니다`);
+          onChange();
         }
         return;
       }
@@ -233,10 +288,12 @@ function createDiscovery(options) {
       announceTimer = setInterval(announce, ANNOUNCE_MS);
       sweepTimer = setInterval(sweep, 1000);
     },
-    stop() {
+    async stop() {
       stopped = true;
       if (announceTimer) { clearInterval(announceTimer); announceTimer = null; }
       if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
+      // 소켓을 닫기 전에 인사한다. 닫고 나서는 보낼 방법이 없다.
+      await sayGoodbye();
       safeClose(receiver);
       receiver = null;
       for (const sock of sockets.values()) safeClose(sock);
@@ -249,5 +306,5 @@ function createDiscovery(options) {
 
 module.exports = {
   createDiscovery, getLocalIPv4Interfaces, DISCOVERY_VERSION,
-  ANNOUNCE_MS, PEER_TIMEOUT_MS, HOST_TIMEOUT_MS, ADDRESS_STICKY_MS,
+  ANNOUNCE_MS, PEER_TIMEOUT_MS, HOST_TIMEOUT_MS, ADDRESS_STICKY_MS, GOODBYE_TRIES,
 };
