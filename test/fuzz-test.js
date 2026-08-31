@@ -36,6 +36,34 @@ function fail(seed, step, what, detail) {
   console.log(`  FAIL  [씨앗 ${seed} / ${step}수] ${what}${detail ? `  (${detail})` : ''}`);
 }
 
+// 제시어가 라이어의 상태에 실려 나갔는지 찾는다. 찾으면 그 자리(경로)를, 없으면 null을.
+//
+// 상태 전체를 문자열로 만들어 놓고 제시어가 들어 있는지 보는 방식이었는데, 한국어에는
+// 낱말 경계가 없어서 짧은 제시어가 안내 문구에 그냥 걸린다("게" ⊂ "게임이 시작되었습니다").
+// 그래서 자리를 따져 본다. 대화 내용(chat[].text)은 빼는데, 시민이 제시어를 그대로 쳐도
+// 그건 규칙이 제대로 도는 것이고, 안내 문구는 제시어를 끼워 넣지 않는 고정 문장이기
+// 때문이다(web/room.js에서 round.word를 쓰는 곳은 정답 확인·결과 공개·you.word뿐이다).
+// 나머지 자리는 전부 훑으므로, 새 항목이 제시어를 흘리면 그대로 잡힌다.
+function leakPath(node, word, path) {
+  const here = path || 'state';
+  if (typeof node === 'string') return node.includes(word) ? here : null;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i += 1) {
+      const hit = leakPath(node[i], word, `${here}[${i}]`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (node && typeof node === 'object') {
+    for (const k of Object.keys(node)) {
+      if (here === 'state' && k === 'chat') continue; // 위 설명 참고
+      const hit = leakPath(node[k], word, `${here}.${k}`);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 function runOne(seed, steps) {
   const rnd = makeRandom(seed);
   let clock = 0;
@@ -172,7 +200,10 @@ function runOne(seed, steps) {
       let json;
       try { json = JSON.stringify(s); } catch (err) { bad('상태를 보낼 수 없다', err.message); break; }
 
-      if (round && id === round.liarId && json.includes(round.word)) { bad('라이어에게 제시어가 새어 나갔다', round.word); break; }
+      if (round && id === round.liarId) {
+        const where = leakPath(s, round.word);
+        if (where) { bad('라이어에게 제시어가 새어 나갔다', `${round.word} @ ${where}`); break; }
+      }
       for (const seat of known) {
         if (seat.token && json.includes(seat.token)) { bad('토큰이 상태로 새어 나갔다'); break; }
       }
