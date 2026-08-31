@@ -398,9 +398,71 @@ async function main() {
   // ── 예전 버전 서버에 붙었을 때 (롤아웃 중 섞이는 상황) ──
   // v0.8.0 이하는 화면이 보내는 연결 확인(ping)을 모른다. 거절당한 것을 그대로 배너로
   // 띄우면 20초마다 "잘못된 요청입니다"가 떠서 고장난 것처럼 보인다.
+  await spectatorBannerCheck(browser);
   await oldServerCheck(browser);
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+}
+
+/**
+ * X14 [이슈] 관전자가 참가자로 바뀌어도 관전 안내가 남아 있었다.
+ *
+ * 배너를 띄우기만 하고 내리는 쪽이 없었다. 다음 판이 시작돼 본인 차례가 됐는데도
+ * "이번 라운드는 관전합니다"가 그대로 떠 있어서, 말해도 되는지 알 수 없었다.
+ */
+async function spectatorBannerCheck(browser) {
+  // 앞선 테스트가 쓰던 방에는 사람과 판이 남아 있다. 깨끗한 방에서 본다.
+  const { createGameServer } = require('../web/game-server');
+  const own = createGameServer({ port: PORT + 5 });
+  await own.start();
+  const ownUrl = `http://127.0.0.1:${PORT + 5}`;
+
+  const ctxs = [];
+  const join = async (name) => {
+    const ctx = await browser.newContext();
+    ctxs.push(ctx);
+    const page = await ctx.newPage();
+    await page.goto(ownUrl);
+    await page.fill('#nickname-input', name);
+    await page.click('#join-btn');
+    return page;
+  };
+
+  const a = await join('먼저1');
+  const b = await join('먼저2');
+  await a.waitForFunction(() => !document.getElementById('start-btn').disabled, null, { timeout: 6000 });
+  await a.click('#start-btn');
+  await a.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 });
+
+  // 진행 중에 들어온다 → 이번 판은 관전
+  const late = await join('늦둥이');
+  await late.waitForFunction(
+    () => !document.getElementById('banner').classList.contains('hidden'), null, { timeout: 6000 });
+  check('X14 진행 중에 들어오면 관전 안내가 뜬다',
+    (await late.textContent('#banner')).includes('관전'),
+    (await late.textContent('#banner')).trim());
+
+  // 먼저 하던 두 사람이 나가면 라운드가 취소되고 로비로 돌아온다
+  await a.click('#leave-btn');
+  await b.click('#leave-btn');
+  await late.waitForFunction(
+    () => !document.getElementById('start-btn').classList.contains('hidden'), null, { timeout: 6000 });
+
+  // 다시 두 사람이 들어와 새 판을 시작한다 - 이제 늦둥이도 참가자다
+  const c = await join('다시1');
+  await late.waitForFunction(() => !document.getElementById('start-btn').disabled, null, { timeout: 6000 });
+  await c.click('#start-btn');
+  await late.waitForSelector('#role-card:not(.hidden)', { timeout: 6000 });
+
+  check('X14 새 판에서는 참가자가 된다',
+    !(await late.textContent('#participant-list')).includes('관전'),
+    (await late.textContent('#participant-list')).replace(/\s+/g, ' ').trim());
+  check('X14 [이슈] 참가자가 되면 관전 안내가 사라진다',
+    await late.isHidden('#banner'),
+    (await late.textContent('#banner')).trim() || '(숨김)');
+
+  for (const ctx of ctxs) await ctx.close();
+  await own.stop();
 }
 
 /**

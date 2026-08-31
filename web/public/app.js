@@ -33,6 +33,7 @@ var reconnectDelay = 500;
 var tickTimer = null;
 var everConnected = false; // [E-1] 첫 접속과 호스트 인계를 구분하기 위해
 var serverOffset = 0;      // 서버 시계 - 내 시계. 남은 시간을 정확히 세기 위해.
+var bannerWhy = null;       // 지금 배너가 떠 있는 사유. 그 사유가 사라지면 내린다.
 var lastChatKey = '';       // 대화를 다시 그릴지 판단하는 지문
 // [요청] 창을 내려 둔 사이에 온 것을 알리기 위한 직전 값. 처음 그릴 때는 알리지 않는다.
 var lastNotifiedSeq = null;
@@ -82,9 +83,13 @@ document.title = LABELS.app;
 
 // ───────────────────────────── 배너 ─────────────────────────────
 var bannerHideTimer = null;
-function showBanner(kind, text, autoHideMs) {
+function showBanner(kind, text, autoHideMs, why) {
   var banner = $('banner');
   if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+  // 같은 배너를 다시 띄우는 것이면 손대지 않는다. 매 상태마다 글자를 갈아 끼우면
+  // 화면이 미세하게 흔들린다.
+  if (bannerWhy === (why || null) && banner.textContent === text && !banner.classList.contains('hidden')) return;
+  bannerWhy = why || null;
   banner.className = kind;
   banner.textContent = text;
   banner.classList.remove('hidden');
@@ -94,7 +99,14 @@ function showBanner(kind, text, autoHideMs) {
 }
 function hideBanner() {
   if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+  bannerWhy = null;
   $('banner').classList.add('hidden');
+}
+
+/** 그 사유로 떠 있는 배너만 내린다. 다른 사유(오류·버전 불일치)로 떠 있으면 두고 본다. */
+function hideBannerIf(why) {
+  if (bannerWhy !== why) return;
+  hideBanner();
 }
 
 // ───────────────────────────── 연결 ─────────────────────────────
@@ -1003,8 +1015,12 @@ function render(s) {
   $('vote-btn').disabled = !(s.phase === 'free' && s.you && s.you.inRound);
   $('vote-btn').title = s.phase === 'turn' ? '설명이 끝나면 투표를 제안할 수 있습니다' : '투표 제안';
 
+  // [이슈] 관전자로 들어왔다가 다음 판에서 참가자가 되어도 이 배너가 그대로 남아 있었다.
+  // 띄우기만 하고 내리는 쪽이 없었다. 본인 차례인데도 "관전합니다"가 떠 있었다.
   if (s.phase !== 'lobby' && s.phase !== 'result' && s.you && !s.you.inRound) {
-    showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.');
+    showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.', 0, 'spectating');
+  } else {
+    hideBannerIf('spectating');
   }
 
   if (wasAtBottom) scrollChatToBottom();

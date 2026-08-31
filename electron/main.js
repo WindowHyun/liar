@@ -17,6 +17,7 @@ const path = require('path');
 const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell } = require('electron');
 const { createPeer, DEFAULT_PORT } = require('./peer');
 const { createUiServer } = require('./ui-server');
+const { createAttention, needsAttention } = require('./attention');
 const { log, error, LOG_PATH } = require('../logger');
 
 const PORT = Number(process.env.LIAR_PORT) || DEFAULT_PORT;
@@ -24,13 +25,11 @@ const PORT = Number(process.env.LIAR_PORT) || DEFAULT_PORT;
 let mainWindow = null;
 let splashWindow = null;
 let tray = null;
-let blinkTimer = null;
+let attention = null;
 let peer = null;
 let uiServer = null;
 let uiPort = null;
 
-// [요청] 창을 내려 둔 사이에 온 것을 알린다. 트레이 아이콘이 깜빡이는 주기.
-const BLINK_MS = 600;
 // 로딩 화면을 너무 빨리 지우면 번쩍하고 만다. 최소 이만큼은 보여준다.
 const SPLASH_MIN_MS = 700;
 
@@ -58,7 +57,7 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
   if (icon.isEmpty()) return; // 아이콘을 못 읽으면 트레이 없이 간다(앱은 계속 돈다)
   // 트레이는 작은 아이콘이다. 원본 그대로 넣으면 OS에 따라 뭉개진다.
-  tray = new Tray(icon.resize({ width: 16, height: 16 }));
+  tray = new Tray(trayIcon());
   log('[Electron] 트레이 아이콘 준비');
   tray.setToolTip('Slack');
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -77,30 +76,34 @@ function showMainWindow() {
 }
 
 /** 창이 이미 눈앞에 있으면 알릴 이유가 없다. */
-function needsAttention() {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  return mainWindow.isMinimized() || !mainWindow.isVisible() || !mainWindow.isFocused();
+function trayIcon() {
+  return nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 16, height: 16 });
+}
+
+/** 깜빡임의 규칙은 attention.js에 있다. 여기서는 트레이와 작업 표시줄에 그리기만 한다. */
+function setupAttention() {
+  attention = createAttention({
+    onFrame: (hidden) => {
+      if (!tray) return;
+      try { tray.setImage(hidden ? nativeImage.createEmpty() : trayIcon()); } catch { /* 트레이가 사라진 뒤 */ }
+    },
+    onStop: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(false);
+      if (!tray) return;
+      try { tray.setImage(trayIcon()); } catch { /* 트레이가 사라진 뒤 */ }
+    },
+  });
 }
 
 function startAttention() {
-  if (!needsAttention()) return;
+  if (!attention || !mainWindow || mainWindow.isDestroyed()) return;
+  if (!needsAttention(mainWindow)) return;
   mainWindow.flashFrame(true);
-  if (!tray || blinkTimer) return;
-  const onIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 16, height: 16 });
-  const offIcon = nativeImage.createEmpty();
-  let on = false;
-  blinkTimer = setInterval(() => {
-    on = !on;
-    try { tray.setImage(on ? offIcon : onIcon); } catch { /* 트레이가 사라진 뒤 */ }
-  }, BLINK_MS);
+  attention.start(mainWindow);
 }
 
 function stopAttention() {
-  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(false);
-  if (!tray) return;
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
-  try { tray.setImage(icon.resize({ width: 16, height: 16 })); } catch { /* 트레이가 사라진 뒤 */ }
+  if (attention) attention.stop();
 }
 
 /**
@@ -265,6 +268,7 @@ app.whenReady().then(async () => {
   log(`[Electron] 시작 (게임 포트 ${PORT}, 화면 포트 ${uiPort}, 로그: ${LOG_PATH})`);
 
   createSplash();   // 본 창이 준비될 때까지 이걸 보여준다
+  setupAttention();
   createTray();
   createWindow();
 
@@ -280,7 +284,7 @@ ipcMain.handle('get-status', () => (peer ? peer.status() : null));
 ipcMain.on('attention', () => { startAttention(); });
 
 app.on('window-all-closed', async () => {
-  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+  if (attention) { attention.stop(); attention = null; }
   if (tray) { tray.destroy(); tray = null; }
   closeSplash();
   if (peer) await peer.stop();

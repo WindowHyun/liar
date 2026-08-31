@@ -11,6 +11,7 @@ const suites = [
   'restart-test.js',                       // 판이 끝나거나 끊긴 뒤 다시 시작되는지
   'fuzz-test.js',                          // 무작위 조작으로 규칙 두들기기
   'connection-test.js',                    // 연결 유지 / 죽은 연결 정리
+  'attention-test.js',                     // Electron - 트레이 알림 규칙
   'discovery-test.js', 'bridge-test.js',   // Electron - 자동 발견, 호스트 인계
 ];
 let failed = 0;
