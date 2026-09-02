@@ -936,7 +936,8 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w53_freeChatIsAsked, w54_freeChatAgreedOpensFreeChat, w55_freeAskTimeoutSkips,
   w56_voteProposalStillWorks,
   w57_nextRoundIsAsked, w58_nextRoundAgreed, w59_nextRoundRejectedGoesStraightToVoting,
-  w60_nextRoundTimeoutSkips, w61_fullFlowStillReachesFreeChat]) {
+  w60_nextRoundTimeoutSkips, w61_fullFlowStillReachesFreeChat,
+  w62_systemLinesDoNotCrowdOutChat, w63_recentSystemLinesStillSurviveFlooding]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 
@@ -1223,6 +1224,63 @@ function w61_fullFlowStillReachesFreeChat() {
   check('W61 2차까지 실제로 돌았다',
     s.chat.some((m) => m.code === 'speakRoundStart' && m.speakRound === 2));
   check('W61 자유 대화에서는 말할 수 있다', room.say(ids[0], '이야기') === null);
+}
+
+
+// ── 이슈: 판을 거듭하면 채팅이 안 보인다 ──────────────────────────────
+
+/** 한 판을 끝까지 진행한다(두 O/X 모두 찬성). 여러 판을 이어서 돌릴 때 쓴다. */
+function playFullRound(room, ids) {
+  room.start();
+  for (let g = 0; g < 400; g += 1) {
+    const d = room._debug();
+    if (d.phase === 'turn') { room.say(d.round.speakOrder[d.round.speakIndex], '설명이요'); continue; }
+    if (answerAsk(room, 'nextRound', true)) continue;
+    break;
+  }
+  answerAsk(room, 'free', true);
+  for (const id of ids) room.say(id, '자유 대화 한 마디');
+  room.callVote(ids[0]);
+  answerAsk(room, 'vote', true);
+  // 표를 한 사람에게 모은다. 갈리면 동점이라 지목 안내가 아예 안 나온다.
+  for (const id of ids) room.vote(id, id === ids[1] ? ids[0] : ids[1]);
+  advance(60000); // 정답 제한 시간까지 흘려 판을 끝낸다
+}
+
+function w62_systemLinesDoNotCrowdOutChat() {
+  // [이슈] "갑자기 채팅이 안 보인다"
+  //   안내 줄은 무조건 지키고 사람이 친 말부터 버렸다. 안내에는 상한이 없어서, 같은
+  //   방에서 판을 거듭하면 판마다 여덟 줄씩 쌓인다. 5명이 12판을 하면 100줄 중 96줄이
+  //   안내가 되어 사람이 친 말이 4줄만 남았다. 방은 아무도 안 나가면 초기화되지 않으므로
+  //   계속 이어서 하면 반드시 걸린다.
+  const { room, players } = makeRoom(['A', 'B', 'C', 'D', 'E'], 0);
+  const ids = idsOf(players);
+  for (let r = 0; r < 15; r += 1) playFullRound(room, ids);
+
+  const chat = room.stateFor(ids[0]).chat;
+  const sys = chat.filter((m) => m.kind === 'system').length;
+  const talk = chat.length - sys;
+  check('W62 [이슈] 판을 거듭해도 사람이 친 말이 대화창에 남는다',
+    talk >= 60, `15판 뒤 안내 ${sys}줄 / 사람이 친 말 ${talk}줄`);
+  check('W62 안내 줄에도 상한이 걸린다',
+    sys <= room.SYSTEM_MAX, `안내 ${sys}줄 (상한 ${room.SYSTEM_MAX})`);
+  check('W62 전체 상한은 그대로다', chat.length <= room.CHAT_MAX, String(chat.length));
+}
+
+function w63_recentSystemLinesStillSurviveFlooding() {
+  // 원래 지키려던 것: 한 사람이 도배해도 "누가 지목됐는지 / 결과가 무엇인지"는 남아야 한다.
+  // 안내에 상한을 걸면서 이게 깨지면 안 된다.
+  const { room, players } = makeRoom(['A', 'B', 'C'], 0);
+  const ids = idsOf(players);
+  playFullRound(room, ids);
+  check('W63 판이 끝났다', room._debug().phase === 'result');
+
+  for (let i = 0; i < 150; i += 1) room.say(ids[0], `도배 ${i}`);
+  const chat = room.stateFor(ids[1]).chat;
+  check('W63 도배해도 결과 안내는 남는다',
+    chat.some((m) => m.code === 'result'),
+    chat.filter((m) => m.kind === 'system').map((m) => m.code).join(','));
+  check('W63 도배해도 지목 안내는 남는다', chat.some((m) => m.code === 'accused'));
 }
 
 const failed = results.filter((r) => !r.ok).length;

@@ -69,6 +69,8 @@ const GUESS_MS = 30000;         // 라이어가 제시어를 맞힐 제한 시�
 // 스스로 나가기를 누른 사람은 이 시간을 기다리지 않고 그 자리에서 지운다(leave 참고).
 const DROP_MS = 10000;
 const CHAT_MAX = 100;           // 재접속한 사람에게도 보여줄 최근 대화 수
+// 그중 안내(System) 줄이 차지할 수 있는 최대치. 나머지(70줄)는 사람이 친 말 몫으로 남는다.
+const SYSTEM_MAX = 30;
 const RECENT_WORDS_MAX = 8;
 
 /**
@@ -583,8 +585,25 @@ function createRoom(options) {
    */
   function trimChat() {
     while (chat.length > CHAT_MAX) {
-      const oldestChat = chat.findIndex((m) => m.kind === 'chat');
-      chat.splice(oldestChat >= 0 ? oldestChat : 0, 1);
+      // [이슈] 안내 줄이 사람 말을 밀어내고 대화창을 통째로 차지했다.
+      //
+      // 원래는 사람이 친 말부터 버리고 안내는 무조건 지켰다. 한 사람이 도배해도
+      // "누가 지목됐는지", "결과가 무엇인지"가 남게 하려던 것이다. 그런데 안내에는
+      // 상한이 없었고, 같은 방에서 판을 거듭하면 판마다 여덟 줄씩 쌓인다.
+      // 5명이 12판을 하면 100줄 중 96줄이 안내가 되어, 사람이 친 말이 4줄만 남았다.
+      // 방은 아무도 안 나가면 초기화되지 않으므로 계속 이어서 하면 반드시 걸린다.
+      //
+      // 그래서 안내에도 상한을 둔다. 넘치면 가장 오래된 안내부터 버린다. 방금 나온
+      // 지목·결과는 뒤쪽에 있어 그대로 남으므로, 원래 지키려던 것은 그대로 지켜진다.
+      const systemCount = chat.reduce((n, m) => n + (m.kind === 'system' ? 1 : 0), 0);
+      let drop;
+      if (systemCount > SYSTEM_MAX) {
+        drop = chat.findIndex((m) => m.kind === 'system');
+      } else {
+        drop = chat.findIndex((m) => m.kind === 'chat');
+        if (drop < 0) drop = 0; // 안내뿐이고 상한 이하다 - 그때는 앞에서부터 민다
+      }
+      chat.splice(drop, 1);
     }
   }
 
@@ -928,10 +947,12 @@ function createRoom(options) {
     // 테스트에서 들여다보기 위한 것. 서버는 쓰지 않는다.
     _debug: () => ({ phase, round, result }),
     MIN_PLAYERS, MAX_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
+    CHAT_MAX, SYSTEM_MAX,
   };
 }
 
 module.exports = {
   createRoom, validateWordList,
   MIN_PLAYERS, MAX_PLAYERS, TURN_ROUNDS, PROPOSAL_MS, VOTE_MS, GUESS_MS, DROP_MS,
+  CHAT_MAX, SYSTEM_MAX,
 };

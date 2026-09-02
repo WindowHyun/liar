@@ -469,8 +469,11 @@ function renderChat(s) {
   var key = s.chat.length + ':' + (s.chat.length ? s.chat[s.chat.length - 1].seq : 0);
   if (key === lastChatKey) return;
   var wasAtBottom = isChatAtBottom();
-  lastChatKey = key;
 
+  // [이슈] 지문(lastChatKey)은 다 그린 뒤에 남긴다.
+  // 먼저 남기면, 그리다가 한 줄에서 문제가 생겼을 때 이미 비워 둔 대화창이 빈 채로 남고
+  // 지문은 최신이라 다음부터 "그릴 것이 없다"고 판단해 버린다 - 대화가 영영 안 보인다.
+  // 나중에 남기면 다음 상태에서 다시 그려 보므로 스스로 회복한다.
   var box = $('chat-messages');
   box.innerHTML = '';
 
@@ -498,6 +501,7 @@ function renderChat(s) {
     }
     box.appendChild(shell);
   });
+  lastChatKey = key;   // 여기까지 왔으면 실제로 다 그려진 것이다
   if (wasAtBottom) scrollChatToBottom();
 }
 

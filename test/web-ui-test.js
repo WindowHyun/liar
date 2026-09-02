@@ -415,11 +415,83 @@ async function main() {
   // ── 예전 버전 서버에 붙었을 때 (롤아웃 중 섞이는 상황) ──
   // v0.8.0 이하는 화면이 보내는 연결 확인(ping)을 모른다. 거절당한 것을 그대로 배너로
   // 띄우면 20초마다 "잘못된 요청입니다"가 떠서 고장난 것처럼 보인다.
+  await chatRedrawRecoversCheck(browser);
   await bannerAutoHideCheck(browser);
   await spectatorBannerCheck(browser);
   await oldServerCheck(browser);
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+}
+
+/**
+ * X16 [이슈] 대화를 그리다 한 줄에서 문제가 생기면 그 뒤로 대화창이 비어 있었다.
+ *
+ * 다시 그릴지 판단하는 지문을 그리기 "전에" 남겼다. 그래서 도중에 예외가 나면 이미
+ * 비워 둔 대화창이 빈 채로 남는데, 지문은 최신이라 "그릴 것이 없다"고 판단해 버린다.
+ * 새 대화가 오면 지문이 달라져 다시 그려지지만, 그 전까지 - 투표든 단계 전환이든
+ * 대화가 아닌 변화가 아무리 일어나도 - 대화창은 계속 비어 있다.
+ *
+ * 지문을 다 그린 뒤에 남기면 다음 상태 갱신에서 곧바로 다시 그려 회복한다.
+ * (그래서 이 테스트는 "새 대화"가 아니라 "대화가 아닌 변화"로 확인한다.
+ *  새 대화로 확인하면 고치기 전에도 통과해서 아무것도 잡지 못한다.)
+ */
+async function chatRedrawRecoversCheck(browser) {
+  const own = createGameServer({ port: PORT + 7 });
+  await own.start();
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`http://127.0.0.1:${PORT + 7}`);
+  await page.fill('#nickname-input', '회복');
+  await page.click('#join-btn');
+  await page.waitForSelector('#screen-game:not(.hidden)', { timeout: 5000 });
+
+  const ctx2 = await browser.newContext();
+  const other = await ctx2.newPage();
+  await other.goto(`http://127.0.0.1:${PORT + 7}`);
+  await other.fill('#nickname-input', '상대');
+  await other.click('#join-btn');
+  await wait(400);
+
+  await other.fill('#chat-input', '첫 줄');
+  await other.press('#chat-input', 'Enter');
+  await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('첫 줄'), null, { timeout: 5000 });
+
+  // 다음 한 번만 그리기가 실패하게 만든다(한 줄이 이상해서 터지는 상황을 흉내낸다).
+  await page.evaluate(() => {
+    const real = window.messageShell;
+    let fired = false;
+    window.messageShell = function (o) {
+      if (!fired) { fired = true; throw new Error('테스트: 한 줄 그리기 실패'); }
+      return real(o);
+    };
+  });
+  await other.fill('#chat-input', '터지는 줄');
+  await other.press('#chat-input', 'Enter');
+  await wait(700);
+  check('X16 그리다 실패하면 그 순간에는 대화가 비어 있다',
+    (await page.textContent('#chat-messages')).trim() === '',
+    (await page.textContent('#chat-messages')).trim().slice(0, 40) || '(빈 화면)');
+
+  // 대화가 아닌 변화(사람이 한 명 더 들어옴)만으로 회복해야 한다.
+  // 참가는 대화 줄을 남기지 않으므로 대화 지문은 그대로다 - 고치기 전에는 여기서 안 그렸다.
+  const ctx3 = await browser.newContext();
+  const third = await ctx3.newPage();
+  await third.goto(`http://127.0.0.1:${PORT + 7}`);
+  await third.fill('#nickname-input', '세번째');
+  await third.click('#join-btn');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#participant-list li').length === 3, null, { timeout: 5000 });
+  await wait(500);
+
+  const text = await page.textContent('#chat-messages');
+  check('X16 [이슈] 대화가 아닌 변화만으로도 스스로 회복한다',
+    text.includes('첫 줄') && text.includes('터지는 줄'),
+    text.replace(/\s+/g, ' ').trim().slice(0, 60) || '(빈 화면)');
+
+  await ctx.close();
+  await ctx2.close();
+  await ctx3.close();
+  await own.stop();
 }
 
 /**
