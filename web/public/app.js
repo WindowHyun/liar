@@ -394,6 +394,52 @@ function messageShell(opts) {
   return wrap;
 }
 
+/** 이 말이 나를 부른 것인가. */
+function mentionsMe(m) {
+  if (!m.mentions || !myId) return false;
+  for (var i = 0; i < m.mentions.length; i += 1) {
+    if (m.mentions[i].id === myId) return true;
+  }
+  return false;
+}
+
+/**
+ * [요청] 대화 속 "@닉네임"을 눈에 띄게 그린다.
+ *
+ * 누구를 부른 것인지는 서버가 정해서 내려준다(mentions). 화면은 그 이름이 나온 자리만
+ * 찾아 감싼다. 문자열을 직접 붙이지 않고 노드로 쌓는 이유는, 닉네임에 무엇이 들어 있든
+ * 그대로 글자로만 보이게 하기 위해서다.
+ */
+function chatText(m) {
+  var box = document.createElement('div');
+  box.className = 'text';
+  var text = m.text == null ? '' : m.text;
+  var names = (m.mentions || []).map(function (x) { return x.nickname; })
+    .filter(Boolean)
+    .sort(function (a, b) { return b.length - a.length; }); // 겹치면 긴 쪽부터 (서버와 같은 규칙)
+
+  if (names.length === 0) { box.textContent = text; return box; }
+
+  var buf = '';
+  for (var i = 0; i < text.length;) {
+    var hit = null;
+    if (text[i] === '@') {
+      for (var n = 0; n < names.length; n += 1) {
+        if (text.slice(i + 1, i + 1 + names[n].length) === names[n]) { hit = names[n]; break; }
+      }
+    }
+    if (!hit) { buf += text[i]; i += 1; continue; }
+    if (buf) { box.appendChild(document.createTextNode(buf)); buf = ''; }
+    var chip = document.createElement('span');
+    chip.className = 'mention';
+    chip.textContent = '@' + hit;
+    box.appendChild(chip);
+    i += 1 + hit.length;
+  }
+  if (buf) box.appendChild(document.createTextNode(buf));
+  return box;
+}
+
 /** 사람 이름과 위장 단어를 강조한 한 줄. 서버가 준 code로 화면이 문구를 만든다. */
 function systemLine(m) {
   var p = document.createElement('div');
@@ -494,10 +540,9 @@ function renderChat(s) {
     if (m.kind === 'system') {
       shell.body.appendChild(systemLine(m));
     } else {
-      var t = document.createElement('div');
-      t.className = 'text';
-      t.textContent = m.text == null ? '' : m.text;
-      shell.body.appendChild(t);
+      shell.body.appendChild(chatText(m));
+      // 나를 부른 말은 한눈에 보여야 한다. 안 그러면 대화가 빠를 때 그냥 지나간다.
+      if (mentionsMe(m)) shell.classList.add('mentions-me');
     }
     box.appendChild(shell);
   });

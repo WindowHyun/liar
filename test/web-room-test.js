@@ -937,7 +937,8 @@ for (const fn of [w1_minimumPlayers, w2_liarNeverSeesWord, w3_everyoneSeesSameRe
   w56_voteProposalStillWorks,
   w57_nextRoundIsAsked, w58_nextRoundAgreed, w59_nextRoundRejectedGoesStraightToVoting,
   w60_nextRoundTimeoutSkips, w61_fullFlowStillReachesFreeChat,
-  w62_systemLinesDoNotCrowdOutChat, w63_recentSystemLinesStillSurviveFlooding]) {
+  w62_systemLinesDoNotCrowdOutChat, w63_recentSystemLinesStillSurviveFlooding,
+  w64_mentionIsDetected, w65_mentionEdgeCases, w66_mentionSurvivesDeparture]) {
   try { fn(); } catch (err) { check(`${fn.name} 실행 중 예외`, false, err.message); }
 }
 
@@ -1281,6 +1282,69 @@ function w63_recentSystemLinesStillSurviveFlooding() {
     chat.some((m) => m.code === 'result'),
     chat.filter((m) => m.kind === 'system').map((m) => m.code).join(','));
   check('W63 도배해도 지목 안내는 남는다', chat.some((m) => m.code === 'accused'));
+}
+
+
+// ── 요청: @닉네임으로 사람 부르기 ────────────────────────────────────
+
+/** 마지막 대화 한 줄에서 부른 사람들의 닉네임. */
+function mentionsOf(room, viewerId) {
+  const chat = room.stateFor(viewerId).chat;
+  const last = chat[chat.length - 1];
+  return (last.mentions || []).map((x) => x.nickname);
+}
+
+function w64_mentionIsDetected() {
+  const { room, players } = makeRoom(['철수', '영희'], 0);
+  const [a, b] = idsOf(players);
+  room.say(a, '@영희 이거 뭐야');
+  check('W64 [요청] @닉네임을 부르면 그 사람이 기록된다',
+    mentionsOf(room, a).join(',') === '영희', mentionsOf(room, a).join(',') || '(없음)');
+
+  const last = room.stateFor(a).chat.slice(-1)[0];
+  check('W64 누구인지 id로도 남는다', last.mentions[0].id === b, JSON.stringify(last.mentions));
+  check('W64 원래 글자는 그대로 남는다', last.text === '@영희 이거 뭐야', last.text);
+}
+
+function w65_mentionEdgeCases() {
+  const { room, players } = makeRoom(['김', '김철수', '철수'], 0);
+  const [, , c] = idsOf(players);
+  room.join({ nickname: '철수' }); // 겹치는 이름 → 철수(2)
+
+  room.say(c, '@김철수 안녕');
+  check('W65 이름이 겹치면 긴 쪽을 고른다 (@김철수가 "김"으로 잡히지 않는다)',
+    mentionsOf(room, c).join(',') === '김철수', mentionsOf(room, c).join(','));
+
+  room.say(c, '@철수(2) 왔어?');
+  check('W65 괄호가 붙은 이름도 부를 수 있다',
+    mentionsOf(room, c).join(',') === '철수(2)', mentionsOf(room, c).join(','));
+
+  room.say(c, '@김 @철수 둘 다');
+  check('W65 여러 명을 한 번에 부를 수 있다',
+    mentionsOf(room, c).sort().join(',') === '김,철수', mentionsOf(room, c).join(','));
+
+  room.say(c, '@김 @김 두 번');
+  check('W65 같은 사람을 두 번 불러도 한 번만 센다',
+    mentionsOf(room, c).length === 1, mentionsOf(room, c).join(','));
+
+  room.say(c, '메일은 a@b.com 입니다');
+  check('W65 없는 이름은 부른 것으로 보지 않는다 (이메일 등)',
+    mentionsOf(room, c).length === 0, mentionsOf(room, c).join(','));
+
+  room.say(c, '그냥 하는 말');
+  const plain = room.stateFor(c).chat.slice(-1)[0];
+  check('W65 부른 사람이 없으면 항목 자체를 붙이지 않는다',
+    plain.mentions === undefined, JSON.stringify(plain.mentions));
+}
+
+function w66_mentionSurvivesDeparture() {
+  // 부른 사람이 나가도 지난 대화에서는 이름이 그대로 보여야 한다.
+  const { room, players } = makeRoom(['철수', '영희'], 0);
+  const [a, b] = idsOf(players);
+  room.say(a, '@영희 안녕');
+  room.leave(b);
+  check('W66 부른 사람이 나가도 지난 대화에 이름이 남는다',
+    mentionsOf(room, a).join(',') === '영희', mentionsOf(room, a).join(',') || '(사라짐)');
 }
 
 const failed = results.filter((r) => !r.ok).length;

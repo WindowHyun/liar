@@ -244,6 +244,36 @@ function createRoom(options) {
     return `${name}(99)`;
   }
 
+  /**
+   * [요청] "@닉네임"으로 사람을 부른다.
+   *
+   * 누구를 부른 것인지는 서버가 정한다. 화면이 알아서 짐작하면 사람마다 다르게 보이고,
+   * 나중에 들어온 사람이 지난 대화를 볼 때도 어긋난다.
+   *
+   * 닉네임에는 공백도 괄호도 들어갈 수 있다("철수(2)"). 그래서 @ 뒤부터 닉네임이
+   * 그대로 이어지는지 보고, 겹치면 긴 쪽을 고른다("김"과 "김철수"가 같이 있을 때
+   * "@김철수"가 "김"으로 잡히면 안 된다).
+   *
+   * 부른 사람의 닉네임까지 같이 실어 보낸다. 그 사람이 나간 뒤에도 지난 대화에서
+   * 이름이 그대로 보여야 하기 때문이다.
+   */
+  function findMentions(text) {
+    const names = [...players.values()]
+      .filter((p) => p.nickname)
+      .sort((a, b) => b.nickname.length - a.nickname.length);
+    const found = [];
+    const seen = new Set();
+    for (let i = 0; i < text.length; i += 1) {
+      if (text[i] !== '@') continue;
+      const rest = text.slice(i + 1);
+      const hit = names.find((p) => rest.startsWith(p.nickname));
+      if (!hit || seen.has(hit.id)) continue;
+      seen.add(hit.id);
+      found.push({ id: hit.id, nickname: hit.nickname });
+    }
+    return found;
+  }
+
   function nameOf(playerId) {
     const player = players.get(playerId);
     if (player) return player.nickname;
@@ -631,7 +661,13 @@ function createRoom(options) {
     if (phase === 'turn' && playerId !== currentSpeakerId()) {
       return '지금은 ' + nameOf(currentSpeakerId()) + '님의 설명 차례입니다.';
     }
-    pushChat({ kind: 'chat', id: playerId, name: player.nickname, text: String(text).trim().slice(0, 300), at: now() });
+    const said = String(text).trim().slice(0, 300);
+    const mentions = findMentions(said);
+    const entry = { kind: 'chat', id: playerId, name: player.nickname, text: said, at: now() };
+    // 부른 사람이 없으면 항목을 아예 넣지 않는다. 대화 전체가 매 갱신마다 오가므로
+    // 쓰지도 않을 빈 배열을 100줄에 달아 보낼 이유가 없다.
+    if (mentions.length) entry.mentions = mentions;
+    pushChat(entry);
 
     // 설명을 마쳤으면 대화권을 다음 사람에게 넘긴다.
     if (phase === 'turn') {

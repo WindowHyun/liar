@@ -206,3 +206,9 @@ input:disabled { opacity:.5; }
 @media (max-width: 720px) {
   #nickname-input, #chat-input, .guess-row input { font-size:16px; }
 }
+
+/* [요청] @닉네임으로 사람을 부른 자리. 슬랙처럼 파란 글씨로 눈에 띄게. */
+.mention { background:#E8F1FB; color:#1264A3; border-radius:3px; padding:0 3px; font-weight:700; }
+/* 나를 부른 말은 줄 전체를 노랗게 - 대화가 빠를 때 그냥 지나치지 않도록 */
+.msg.mentions-me { background:#EEF5FC; border-left:3px solid #1264A3; border-radius:0 6px 6px 0; margin-left:-13px; padding:9px 10px 9px 10px; }
+.msg.mentions-me .mention { background:#D6E7F7; }

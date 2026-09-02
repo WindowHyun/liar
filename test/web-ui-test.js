@@ -415,12 +415,77 @@ async function main() {
   // ── 예전 버전 서버에 붙었을 때 (롤아웃 중 섞이는 상황) ──
   // v0.8.0 이하는 화면이 보내는 연결 확인(ping)을 모른다. 거절당한 것을 그대로 배너로
   // 띄우면 20초마다 "잘못된 요청입니다"가 떠서 고장난 것처럼 보인다.
+  await mentionCheck(browser);
   await chatRedrawRecoversCheck(browser);
   await bannerAutoHideCheck(browser);
   await spectatorBannerCheck(browser);
   await oldServerCheck(browser);
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
+}
+
+/**
+ * X17 [요청] "@닉네임"으로 사람을 부른다.
+ *
+ * 부른 자리는 파랗게, 나를 부른 말은 줄 전체를 눈에 띄게 그린다.
+ * 누구를 부른 것인지는 서버가 정하므로, 여기서는 화면이 그걸 제대로 그리는지만 본다.
+ */
+async function mentionCheck(browser) {
+  const own = createGameServer({ port: PORT + 8 });
+  await own.start();
+  const ctxs = [];
+  const join = async (name) => {
+    const ctx = await browser.newContext();
+    ctxs.push(ctx);
+    const page = await ctx.newPage();
+    await page.goto(`http://127.0.0.1:${PORT + 8}`);
+    await page.fill('#nickname-input', name);
+    await page.click('#join-btn');
+    return page;
+  };
+  const me = await join('영희');
+  const other = await join('철수');
+  await me.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 2, null, { timeout: 6000 });
+
+  // 철수가 영희를 부른다
+  await other.fill('#chat-input', '@영희 이거 뭐야');
+  await other.press('#chat-input', 'Enter');
+  await me.waitForFunction(() => document.querySelector('#chat').textContent.includes('이거 뭐야'), null, { timeout: 5000 });
+
+  check('X17 [요청] 부른 자리가 눈에 띄게 그려진다',
+    (await me.textContent('#chat-messages .mention')) === '@영희',
+    await me.textContent('#chat-messages .mention'));
+  check('X17 부른 자리 말고는 글자가 그대로다',
+    (await me.textContent('#chat-messages')).includes('@영희 이거 뭐야'));
+  check('X17 [요청] 나를 부른 말은 줄 전체가 강조된다',
+    (await me.locator('#chat-messages .msg.mentions-me').count()) === 1,
+    String(await me.locator('#chat-messages .msg.mentions-me').count()));
+  check('X17 부른 사람 본인 화면에는 줄 강조가 없다',
+    (await other.locator('#chat-messages .msg.mentions-me').count()) === 0);
+  check('X17 부른 사람 화면에도 파란 표시는 보인다',
+    (await other.locator('#chat-messages .mention').count()) === 1);
+
+  // 이름이 아닌 @는 그냥 글자다
+  await other.fill('#chat-input', '메일은 a@b.com 이야');
+  await other.press('#chat-input', 'Enter');
+  await me.waitForFunction(() => document.querySelector('#chat').textContent.includes('a@b.com'), null, { timeout: 5000 });
+  check('X17 이름이 아닌 @는 표시하지 않는다',
+    (await me.locator('#chat-messages .mention').count()) === 1,
+    String(await me.locator('#chat-messages .mention').count()));
+
+  // 꺾쇠가 들어간 닉네임을 불러도 글자로만 보여야 한다(태그로 새지 않는다)
+  const tricky = await join('<b>굵게</b>');
+  await tricky.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 3, null, { timeout: 6000 });
+  await other.fill('#chat-input', '@<b>굵게</b> 안녕');
+  await other.press('#chat-input', 'Enter');
+  await me.waitForFunction(() => document.querySelector('#chat').textContent.includes('안녕'), null, { timeout: 5000 });
+  check('X17 닉네임에 태그 문자가 있어도 글자로만 보인다',
+    (await me.locator('#chat-messages b').count()) === 0
+      && (await me.textContent('#chat-messages')).includes('@<b>굵게</b>'),
+    `b태그 ${await me.locator('#chat-messages b').count()}개`);
+
+  for (const ctx of ctxs) await ctx.close();
+  await own.stop();
 }
 
 /**
