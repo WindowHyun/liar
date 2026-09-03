@@ -35,6 +35,15 @@ ipcRenderer.invoke('get-status').then((status) => {
   if (status) update(status.serverUrl);
 }).catch(() => { /* 아직 준비 전 */ });
 
+// [요청] 커스텀 타이틀바. OS 창틀이 없으므로(main.js의 frame:false) 화면이 직접
+// 최소화/최대화/닫기를 메인 프로세스에 요청한다. 웹 버전(브라우저)에는 이 객체 자체가 없다.
+const maximizedListeners = [];
+ipcRenderer.on('titlebar-maximized', (_event, isMaximized) => {
+  for (const fn of maximizedListeners) {
+    try { fn(isMaximized); } catch { /* 화면 쪽 예외가 여기까지 올라오지 않게 */ }
+  }
+});
+
 contextBridge.exposeInMainWorld('liar', {
   isElectron: true,
   getServer: () => serverUrl,
@@ -43,4 +52,10 @@ contextBridge.exposeInMainWorld('liar', {
   // [요청] 창을 내려 둔 사이에 대화가 오거나 내 차례가 되면 알린다.
   // 창이 눈앞에 있는지는 메인 쪽에서 판단하므로, 화면은 그냥 알리기만 하면 된다.
   notifyAttention: () => { ipcRenderer.send('attention'); },
+  windowControl: {
+    minimize: () => { ipcRenderer.send('titlebar-minimize'); },
+    maximize: () => { ipcRenderer.send('titlebar-maximize'); },
+    close: () => { ipcRenderer.send('titlebar-close'); },
+    onMaximizedChange: (fn) => { if (typeof fn === 'function') maximizedListeners.push(fn); },
+  },
 });

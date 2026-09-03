@@ -35,6 +35,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.png': 'image/png',
   '.js': 'text/javascript; charset=utf-8',
+  '.woff2': 'font/woff2',
 };
 
 function createGameServer(options) {

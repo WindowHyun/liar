@@ -119,17 +119,17 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   if (OUT) await p1.page.screenshot({ path: `${OUT}/01-start.png` });
 
   const cards = await Promise.all(players.map((p) => p.page.textContent('#role-card')));
-  const liarIdx = cards.findIndex((c) => c.includes('당신은 Oliveyoung입니다'));
+  const liarIdx = cards.findIndex((c) => c.includes('담당자: '));
   const liar = players[liarIdx];
   const citizens = players.filter((p) => p !== liar);
-  const word = cards.find((c) => !c.includes('당신은 Oliveyoung입니다')).split('제시어: ')[1].trim();
-  const category = cards[0].split('카테고리: ')[1].split(/[/(]/)[0].trim();
+  const word = cards.find((c) => !c.includes('담당자: ')).split('제시어: ')[1].trim();
+  const category = cards[0].split('카테고리: ')[1].split(/[\n(]/)[0].trim();
 
   log('\n━━━━━━━━━━ 역할이 정해졌습니다 ━━━━━━━━━━');
   log(`  카테고리 : ${category}`);
   log(`  제시어   : ${word}   ← 시민 4명만 압니다`);
   log(`  라이어   : ${liar.name}`);
-  check('라이어는 정확히 한 명', cards.filter((c) => c.includes('당신은 Oliveyoung입니다')).length === 1);
+  check('라이어는 정확히 한 명', cards.filter((c) => c.includes('담당자: ')).length === 1);
   check('시민 4명이 같은 제시어를 본다', cards.filter((c) => c.includes(`제시어: ${word}`)).length === 4);
   const liarHtml = await liar.page.content();
   check('라이어 화면 어디에도 제시어가 없다', !liarHtml.includes(word), `제시어="${word}"`);
@@ -255,7 +255,7 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   log('\n━━━━━━━━━━ 색출 ━━━━━━━━━━');
   log(`  ${liar.name}님이 4표로 지목되었습니다 → 라이어였습니다`);
   check('지목 안내가 대화에 남는다',
-    (await p1.page.textContent('#chat-messages')).includes(`${liar.name}님이 Oliveyoung으로 지목되었습니다`));
+    (await p1.page.textContent('#chat-messages')).includes(`${liar.name}님이 담당자로 지목되었습니다`));
   check('지목된 라이어에게만 정답창이 뜬다',
     (await citizens[0].page.locator('#guess-input').count()) === 0);
   if (OUT) await p1.page.screenshot({ path: `${OUT}/06-guess.png` });
@@ -266,8 +266,8 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   await liar.page.fill('#guess-input', answer);
   await liar.page.press('#guess-input', 'Enter');
 
-  await Promise.all(players.map((p) => p.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 8000 })));
-  const panels = await Promise.all(players.map((p) => p.page.textContent('#result-panel')));
+  await Promise.all(players.map((p) => p.page.waitForSelector('.result-card', { timeout: 8000 })));
+  const panels = await Promise.all(players.map((p) => p.page.locator('.result-card').last().textContent()));
   log('\n━━━━━━━━━━ 결과 ━━━━━━━━━━');
   log(`  ${panels[0].replace(/\s+/g, ' ').trim()}`);
   check('5명이 같은 결과를 본다', panels.every((t) => t.includes('시민 팀 승리')));

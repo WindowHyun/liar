@@ -164,6 +164,9 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#F5F5F7',
+    // [요청] OS 기본 창틀 대신 슬랙처럼 화면 안에 직접 그린 타이틀바를 쓴다.
+    // 웹 버전(브라우저)에는 이 옵션이 없으므로 그쪽은 그대로 브라우저 창틀을 쓴다.
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -201,7 +204,16 @@ function createWindow() {
   // 창을 다시 보면 알림을 끈다.
   for (const ev of ['focus', 'restore', 'show']) mainWindow.on(ev, stopAttention);
 
+  // [요청] 커스텀 타이틀바의 최대화 버튼 모양(□/❐)이 실제 창 상태를 따라가게 한다.
+  mainWindow.on('maximize', () => sendMaximized(true));
+  mainWindow.on('unmaximize', () => sendMaximized(false));
+
   mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+function sendMaximized(isMaximized) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('titlebar-maximized', isMaximized);
 }
 
 // 같은 PC에서 두 번 실행해도 막지 않는다. 게임 통신이 TCP(WebSocket)라서,
@@ -283,6 +295,15 @@ ipcMain.handle('get-status', () => (peer ? peer.status() : null));
 // [요청] 화면이 "알릴 만한 일이 생겼다"고 알려 온다(대화 도착 / 내 차례).
 // 창이 눈앞에 있으면 startAttention()이 알아서 무시한다.
 ipcMain.on('attention', () => { startAttention(); });
+
+// [요청] 커스텀 타이틀바의 최소화/최대화/닫기 버튼. OS 창틀이 없으므로 화면이 직접 요청한다.
+ipcMain.on('titlebar-minimize', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize(); });
+ipcMain.on('titlebar-maximize', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
+ipcMain.on('titlebar-close', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close(); });
 
 /**
  * 창을 모두 닫았을 때. 정리 하나가 실패해도 반드시 app.quit()까지 간다.

@@ -148,16 +148,16 @@ async function main() {
   await Promise.all(pages.map((p) => p.page.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 })));
 
   const cards = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
-  const liars = cards.filter((c) => c.includes('당신은 Oliveyoung입니다'));
+  const liars = cards.filter((c) => c.includes('담당자: '));
   check('X2 라이어는 정확히 한 명', liars.length === 1, `${liars.length}명`);
   check('X2 라이어 화면에는 제시어가 없다', liars[0].includes('제시어는 모릅니다'));
 
-  const citizenCards = cards.filter((c) => !c.includes('당신은 Oliveyoung입니다'));
+  const citizenCards = cards.filter((c) => !c.includes('담당자: '));
   const word = citizenCards[0].split('제시어: ')[1].trim();
   check('X2 시민 두 명은 같은 제시어를 본다', citizenCards.every((c) => c.includes(word)), `제시어=${word}`);
 
   // 라이어의 브라우저 어디에도 제시어가 없어야 한다
-  const liarIndex = cards.findIndex((c) => c.includes('당신은 Oliveyoung입니다'));
+  const liarIndex = cards.findIndex((c) => c.includes('담당자: '));
   const liarHtml = await pages[liarIndex].page.content();
   check('X2 라이어 브라우저 전체에 제시어가 없다', !liarHtml.includes(word));
 
@@ -285,17 +285,18 @@ async function main() {
   check('X5 지목된 라이어에게만 정답창이 뜬다',
     (await pages[(liarIndex + 1) % 3].page.locator('#guess-input').count()) === 0);
 
-  // 요청: "System : ○○○이 (라이어)로 지목되었습니다"
+  // 요청: "Slack bot : ○○○이 (담당자)로 지목되었습니다"
   const accusedLine = await pages[0].page.textContent('#chat-messages');
-  check('X5 지목 안내가 System 메시지로 나온다',
-    accusedLine.includes(liarName + '님이 Oliveyoung으로 지목되었습니다'),
+  check('X5 지목 안내가 Slack bot 메시지로 나온다',
+    accusedLine.includes(liarName + '님이 담당자로 지목되었습니다'),
     accusedLine.split('\n').map((t) => t.trim()).filter(Boolean).slice(-1)[0]);
 
   await pages[liarIndex].page.fill('#guess-input', '전혀다른답');
   await pages[liarIndex].page.press('#guess-input', 'Enter');
 
-  await Promise.all(pages.map((p) => p.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 5000 })));
-  const panels = await Promise.all(pages.map((p) => p.page.textContent('#result-panel')));
+  // [요청] 결과는 팝업이 아니라 대화 속 카드(.result-card)로 남는다.
+  await Promise.all(pages.map((p) => p.page.waitForSelector('.result-card', { timeout: 5000 })));
+  const panels = await Promise.all(pages.map((p) => p.page.locator('.result-card').last().textContent()));
   check('X6 세 명이 같은 결과를 본다',
     panels.every((t) => t.includes('시민 팀 승리')), panels.map((t) => t.slice(0, 14)).join(' | '));
   check('X6 끝난 뒤 라이어와 제시어가 공개된다',
@@ -309,14 +310,14 @@ async function main() {
     !(await p2.page.isVisible('#screen-join')));
   check('X7 새로고침해도 참가자와 결과가 그대로다',
     (await p2.page.textContent('#participant-list')).includes('철수') &&
-    (await p2.page.textContent('#result-panel')).includes('시민 팀 승리'));
+    (await p2.page.locator('.result-card').last().textContent()).includes('시민 팀 승리'));
 
   // 요청한 화면 문구·배치
   check('X8 전적이 사이드바 하단에 버전처럼 표시된다',
     (await p1.page.textContent('#tally-label')).includes('판 ·'),
     (await p1.page.textContent('#tally-label')).trim());
-  check('X8 사이드바 목록 제목이 Oliveyoung이다',
-    (await p1.page.textContent('#sidebar .label')).trim() === 'Oliveyoung');
+  check('X8 사이드바 목록 제목이 담당자다',
+    (await p1.page.textContent('#sidebar .label')).trim() === '담당자');
   check('X8 인원수가 허들 버튼 왼쪽에 숫자로 나온다',
     (await p1.page.textContent('#member-count')).trim() === '3');
   check('X8 투표 버튼이 헤드셋이다',
@@ -333,7 +334,7 @@ async function main() {
 
   // 라이어가 나가면 판이 취소되므로, 판이 이어지는지 보려면 시민이 나가야 한다.
   const cards2 = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
-  const liar2 = pages[cards2.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const liar2 = pages[cards2.findIndex((c) => c.includes('담당자: '))];
   const citizens = pages.filter((p) => p !== liar2);
 
   await citizens[0].page.click('#leave-btn');
@@ -369,17 +370,19 @@ async function main() {
   const here = [liar2, citizens[0]];
   await Promise.all(here.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
   const cards3 = await Promise.all(here.map((p) => p.page.textContent('#role-card')));
-  const liar3 = here[cards3.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const liar3 = here[cards3.findIndex((c) => c.includes('담당자: '))];
   const stays = here.find((p) => p !== liar3);
 
   await liar3.page.click('#leave-btn');
-  await stays.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 5000 });
+  // 이번이 이 방의 두 번째 결과 카드다(첫 번째는 X6에서 이미 남았다).
+  await stays.page.waitForFunction(
+    () => document.querySelectorAll('.result-card').length > 1, null, { timeout: 5000 });
   check('X11 [요청] 라이어가 도망가면 시민 승으로 끝난다',
-    (await stays.page.textContent('#result-panel')).includes('시민 팀 승리'),
-    (await stays.page.textContent('#result-panel')).replace(/\s+/g, ' ').trim().slice(0, 70));
+    (await stays.page.locator('.result-card').last().textContent()).includes('시민 팀 승리'),
+    (await stays.page.locator('.result-card').last().textContent()).replace(/\s+/g, ' ').trim().slice(0, 70));
   check('X11 [요청] 누가 라이어였는지 밝힌다',
-    (await stays.page.textContent('#result-panel')).includes(liar3.name)
-    && (await stays.page.textContent('#result-panel')).includes('도중에 나갔습니다'));
+    (await stays.page.locator('.result-card').last().textContent()).includes(liar3.name)
+    && (await stays.page.locator('.result-card').last().textContent()).includes('도중에 나갔습니다'));
   check('X11 시민 승으로 전적에 쌓인다',
     (await stays.page.textContent('#tally-label')).includes('시민 2'),
     (await stays.page.textContent('#tally-label')).trim() || '(비어 있음)');
@@ -420,6 +423,7 @@ async function main() {
   await bannerAutoHideCheck(browser);
   await spectatorBannerCheck(browser);
   await oldServerCheck(browser);
+  await slackLookCheck(browser);
 
   check('X9 브라우저 콘솔 오류 없음', errors.length === 0, errors.slice(0, 2).join(' | '));
 }
@@ -725,6 +729,124 @@ async function oldServerCheck(browser) {
   await ctx.close();
   wss.close();
   await new Promise((r) => srv.close(r));
+}
+
+/**
+ * X18 [요청] 슬랙처럼 보이게 한 화면 반영분을 한꺼번에 확인한다.
+ *
+ *   - 라이어/시민 역할 카드가 같은 색이다 (옆자리에서 색으로 라이어를 알아볼 수 없다)
+ *   - 사람마다 다른 아바타 색, 연속 발언은 묶여서 아바타·이름이 한 번만 보인다
+ *   - **굵게** · `코드` · ~~취소선~~이 실제 서식으로 그려진다 (그리고 여전히 안전하다)
+ *   - 입력창이 Shift+Enter로 줄바꿈되고, Enter만 누르면 그 줄까지 보내고 비워진다
+ *   - 역할 카드를 클릭하면 접혔다 펼쳐진다
+ *   - System이 아니라 Slack bot으로 나온다 / 팝업(#result-panel)이 아예 없다
+ */
+async function slackLookCheck(browser) {
+  const own = createGameServer({ port: PORT + 9 });
+  await own.start();
+  const url = `http://127.0.0.1:${PORT + 9}`;
+  const ctxs = [];
+  const join = async (name) => {
+    const ctx = await browser.newContext();
+    ctxs.push(ctx);
+    const page = await ctx.newPage();
+    await page.goto(url);
+    await page.fill('#nickname-input', name);
+    await page.click('#join-btn');
+    return page;
+  };
+  const a = await join('가영');
+  const b = await join('나래');
+  await a.waitForFunction(() => document.querySelectorAll('#participant-list li').length === 2, null, { timeout: 6000 });
+
+  check('X18 팝업 결과창(#result-panel)이 화면에 아예 없다',
+    (await a.locator('#result-panel').count()) === 0);
+
+  // 아래 대화 관련 확인들은 로비 단계에서 한다 - 라운드가 시작되면 대화권이 있는
+  // 사람만 입력창을 쓸 수 있어서(1인 1회), 자유롭게 여러 번 치는 확인과는 안 맞는다.
+
+  // ── 아바타 색: 서로 다른 사람은 다른 색 ──
+  await a.fill('#chat-input', '안녕하세요');
+  await a.press('#chat-input', 'Enter');
+  await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('안녕하세요'), null, { timeout: 5000 });
+  await b.fill('#chat-input', '반갑습니다');
+  await b.press('#chat-input', 'Enter');
+  await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('반갑습니다'), null, { timeout: 5000 });
+  const avatarColors = await a.evaluate(() => [...document.querySelectorAll('#chat-messages .avatar:not(.sys)')].map((el) => el.style.background));
+  check('X18 [요청] 사람마다 다른 아바타 색이다',
+    avatarColors.length >= 2 && avatarColors[0] !== avatarColors[1], avatarColors.join(' / '));
+
+  // ── 연속 발언 묶기: 같은 사람이 바로 이어 말하면 아바타·이름이 한 번만 ──
+  await a.fill('#chat-input', '연속 첫 줄');
+  await a.press('#chat-input', 'Enter');
+  await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('연속 첫 줄'), null, { timeout: 5000 });
+  await a.fill('#chat-input', '연속 둘째 줄');
+  await a.press('#chat-input', 'Enter');
+  await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('연속 둘째 줄'), null, { timeout: 5000 });
+  const grouped = await a.locator('#chat-messages .msg.grouped').count();
+  check('X18 [요청] 같은 사람이 연달아 말하면 묶여서 그려진다', grouped >= 1, `grouped=${grouped}`);
+
+  // ── 서식: **굵게** · `코드` · ~~취소선~~ ──
+  await a.fill('#chat-input', '**굵게** `코드` ~~취소선~~');
+  await a.press('#chat-input', 'Enter');
+  await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('코드'), null, { timeout: 5000 });
+  const lastMsgText = await a.locator('#chat-messages .msg .text').last();
+  check('X18 [요청] **굵게**가 실제 <b>로 그려진다',
+    (await lastMsgText.locator('b').count()) === 1 && (await lastMsgText.locator('b').innerText()) === '굵게');
+  check('X18 [요청] `코드`가 실제 <code>로 그려진다',
+    (await lastMsgText.locator('code').count()) === 1 && (await lastMsgText.locator('code').innerText()) === '코드');
+  check('X18 [요청] ~~취소선~~이 실제 <s>로 그려진다',
+    (await lastMsgText.locator('s').count()) === 1 && (await lastMsgText.locator('s').innerText()) === '취소선');
+  check('X18 서식 기호(*, `, ~) 자체는 화면에 남지 않는다',
+    !(await lastMsgText.innerText()).includes('*') && !(await lastMsgText.innerText()).includes('~'));
+
+  // ── 입력창: Shift+Enter는 줄바꿈, Enter는 전송 ──
+  await a.fill('#chat-input', '한 줄');
+  await a.press('#chat-input', 'Shift+Enter');
+  await a.type('#chat-input', '두 줄');
+  const valueWithNewline = await a.inputValue('#chat-input');
+  check('X18 [요청] Shift+Enter는 줄바꿈만 한다 (전송되지 않는다)',
+    valueWithNewline === '한 줄\n두 줄', JSON.stringify(valueWithNewline));
+  const heightGrown = await a.evaluate(() => document.getElementById('chat-input').scrollHeight > 30);
+  check('X18 [요청] 줄이 늘어나면 입력창도 늘어난다', heightGrown);
+  await a.press('#chat-input', 'Enter');
+  await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('두 줄'), null, { timeout: 5000 });
+  check('X18 Enter를 누르면 그제서야 전송되고 입력창이 비워진다', (await a.inputValue('#chat-input')) === '');
+
+  // ── 라운드를 시작해서 역할 카드와 System→Slack bot 안내를 함께 본다 ──
+  await a.click('#start-btn');
+  await a.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 });
+  await b.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 });
+
+  check('X18 [요청] 안내 이름이 System이 아니라 Slack bot이다',
+    (await a.textContent('#chat-messages')).includes('Slack bot'));
+
+  // ── 역할 카드: 라이어/시민 색이 같다 (프라이버시 수정) ──
+  const [colorA, colorB] = await Promise.all([a, b].map((p) => p.evaluate(() => {
+    const el = document.getElementById('role-card');
+    return getComputedStyle(el).backgroundColor;
+  })));
+  check('X18 [요청] 라이어/시민 역할 카드가 같은 색이다 (옆자리에서 안 보인다)',
+    colorA === colorB, `${colorA} vs ${colorB}`);
+
+  // ── 역할 카드 접었다 펼치기 ──
+  // 라이어 카드는 "담당자: 이름"이 머리글, "카테고리: ..."가 접히는 상세다.
+  // 시민 카드는 "카테고리: ..."가 머리글, "제시어: ..."가 접히는 상세다. 역할에 따라
+  // 접었을 때 사라져야 하는 글자가 다르므로, 어느 쪽인지 먼저 확인하고 맞는 쪽을 본다.
+  const cardText = () => a.textContent('#role-card');
+  const before = await cardText();
+  const isLiarCard = before.includes('담당자: ');
+  const detailWord = isLiarCard ? '카테고리' : '제시어';
+  check('X18 역할 카드는 처음에 펼쳐져 있다 (상세가 보인다)', before.includes(detailWord), before);
+  await a.click('#role-card');
+  const folded = await cardText();
+  check('X18 [요청] 역할 카드를 클릭하면 접힌다 (상세가 사라진다)', !folded.includes(detailWord), folded);
+  await a.click('#role-card');
+  const reopened = await cardText();
+  check('X18 다시 클릭하면 펼쳐진다', reopened.includes(detailWord));
+
+  for (const ctx of ctxs) await ctx.close();
+  await own.stop();
 }
 
 main()

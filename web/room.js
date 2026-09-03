@@ -895,7 +895,8 @@ function createRoom(options) {
       liarName: result.liar.nickname,
       word: result.word,
       guess: result.guess || null,
-      text: (winner === 'liar' ? 'Oliveyoung 승리' : winner === 'citizens' ? '시민 팀 승리' : '라운드 취소'),
+      accused: result.accused,
+      text: (winner === 'liar' ? '담당자 승리' : winner === 'citizens' ? '시민 팀 승리' : '라운드 취소'),
     });
 
     phase = 'result';

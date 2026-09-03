@@ -1,7 +1,35 @@
+/* [요청] 슬랙 실제 서체(Lato). 영문·숫자만 이 폰트로 그려지고, 한글은 이 폰트에 없는
+   글자라 자연히 다음 폰트로 넘어간다 - 구글 폰트 링크는 실제 앱의 CSP(style-src 'self')가
+   막으므로 폰트 파일을 함께 내려받아 이 폴더 안에서 그대로 쓴다. */
+@font-face { font-family:"Lato"; font-style:normal; font-weight:400; font-display:swap; src:url("lato-400.woff2") format("woff2"); }
+@font-face { font-family:"Lato"; font-style:normal; font-weight:700; font-display:swap; src:url("lato-700.woff2") format("woff2"); }
+
 * { box-sizing: border-box; }
-body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif; background:#F5F5F7; color:#1D1C1D; }
+html, body { height:100%; }
+body { margin:0; font-family: "Lato", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif; background:#F5F5F7; color:#1D1C1D; display:flex; flex-direction:column; }
 .hidden { display:none !important; }
 
+/* ───────────────── Electron 커스텀 타이틀바 ───────────────── */
+/* [요청] OS 창틀 대신 화면 안에 그린 타이틀바. 웹(브라우저) 빌드에서는 항상 .hidden이라
+   자리를 차지하지 않는다 - 아래 #screen-game의 flex:1이 뷰포트 전체를 그대로 채운다. */
+#titlebar {
+  flex-shrink:0; height:32px; display:flex; align-items:center; justify-content:center;
+  background:#3F0E40; color:#fff; -webkit-app-region:drag; position:relative;
+}
+#titlebar-search { -webkit-app-region:no-drag; }
+#titlebar-search-input {
+  width:260px; height:22px; border:none; border-radius:11px; background:rgba(255,255,255,.14);
+  color:#fff; font-size:12px; padding:0 12px; text-align:center; font-family:inherit;
+}
+#titlebar-search-input::placeholder { color:rgba(255,255,255,.6); }
+#titlebar-controls { position:absolute; right:0; top:0; height:100%; display:flex; -webkit-app-region:no-drag; }
+.titlebar-btn {
+  width:44px; height:100%; border:none; background:transparent; color:#fff; opacity:.75;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+}
+.titlebar-btn svg { width:10px; height:10px; }
+.titlebar-btn:hover { opacity:1; background:rgba(255,255,255,.12); }
+.titlebar-btn.titlebar-close:hover { background:#E81123; opacity:1; }
 #screen-join { max-width:420px; margin:80px auto; background:#fff; border:1px solid #E4E4E6; border-radius:10px; padding:32px; }
 #screen-join h1 { font-size:22px; margin:0 0 8px; }
 #screen-join p { font-size:14px; color:#616061; margin:0 0 16px; }
@@ -9,7 +37,7 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #nickname-input { width:100%; height:38px; border:1px solid #D8D8DA; border-radius:6px; padding:0 12px; font-size:14px; margin-bottom:12px; }
 #join-btn { width:100%; height:40px; background:#3F0E40; color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer; }
 
-#screen-game { display:flex; height:100vh; }
+#screen-game { display:flex; flex:1; min-height:0; }
 
 /* ───────────────── 사이드바 ───────────────── */
 #sidebar { width:230px; background:#3F0E40; color:#fff; padding:20px 16px; flex-shrink:0; display:flex; flex-direction:column; }
@@ -24,6 +52,14 @@ body { margin:0; font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Goth
 #participant-list .tag { margin-left:auto; font-size:10px; padding:1px 6px; border-radius:8px; background:#5A2A5C; color:#E4CDE8; flex-shrink:0; }
 #participant-list .tag.voted { background:#2BAC76; color:#fff; }
 #participant-list .tag.speaking { background:#ECB22E; color:#3F2E00; font-weight:700; }
+
+/* [요청] 이름 앞의 아바타 + 우하단 접속 상태 배지 (연결됨/끊김 두 가지) */
+.p-avatar-wrap { position:relative; flex-shrink:0; width:22px; height:22px; }
+.p-avatar { width:22px; height:22px; border-radius:6px; color:#fff; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+.p-badge { position:absolute; right:-2px; bottom:-2px; width:8px; height:8px; border-radius:50%; border:2px solid #3F0E40; }
+.p-badge.online { background:#2BAC76; }
+.p-badge.offline { background:#8A8A8E; }
+li.offline .p-avatar { opacity:.5; }
 
 /* 전적은 버전 표기처럼 사이드바 맨 아래에 작고 흐리게 */
 #sidebar-foot { margin-top:auto; padding-top:12px; border-top:1px solid rgba(255,255,255,.1); }
@@ -59,14 +95,22 @@ button:disabled { opacity:.45; cursor:default; }
 input:disabled { opacity:.5; }
 
 /* ───────────────── 역할 카드 ───────────────── */
-#role-card { margin:14px 20px 0; padding:12px 16px; border-radius:8px; font-size:13px; }
+/* [요청] 접었다 펼 수 있다. 아무 색도 라이어를 드러내지 않도록 시민과 같은 색을 쓴다 -
+   옆에서 화면만 흘끗 봐도 카드 색으로 라이어가 티 나면 안 된다. */
+#role-card { margin:14px 20px 0; padding:12px 16px; border-radius:8px; font-size:13px; cursor:pointer; user-select:none; }
 #role-card.citizen { background:#EAF3DE; color:#27500A; }
-#role-card.liar { background:#FCEBEB; color:#791F1F; }
-#role-card.pending { background:#EDEDF0; color:#5B5B60; }
+#role-card.liar { background:#EAF3DE; color:#27500A; }
+#role-card.liar:hover, #role-card.citizen:hover { filter:brightness(0.97); }
+#role-card.pending { background:#EDEDF0; color:#5B5B60; cursor:default; }
+#role-card .role-head { display:flex; align-items:center; gap:7px; }
+#role-card .chev { display:inline-flex; width:12px; flex-shrink:0; font-size:11px; opacity:.65; }
+#role-card .role-line { display:flex; gap:6px; }
+#role-card .role-detail { margin-top:6px; padding-top:6px; border-top:1px solid rgba(0,0,0,.08); }
 
 /* ───────────────── 대화 ───────────────── */
 #chat { flex:1; overflow-y:auto; padding:14px 20px; }
 .msg { display:flex; gap:10px; margin-bottom:14px; }
+.msg .avatar-slot { width:28px; flex-shrink:0; display:flex; align-items:flex-start; justify-content:center; }
 .msg .avatar { width:28px; height:28px; border-radius:6px; background:#7F77DD; color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .msg .avatar.sys { background:#5A3D5C; font-size:13px; }
 .msg .body { min-width:0; flex:1; }
@@ -76,19 +120,29 @@ input:disabled { opacity:.5; }
 .msg .text { font-size:14px; margin-top:2px; word-break:break-word; line-height:1.55; }
 .msg .text .who-hl { font-weight:700; }
 .msg .text .liar-hl { color:#791F1F; font-weight:700; }
+.msg .text code { background:#F0EFF1; border:1px solid #E4E4E6; border-radius:3px; padding:1px 4px; font-family:"SFMono-Regular", Consolas, Menlo, monospace; font-size:12.5px; }
+
+/* [요청] 같은 사람이 연달아 말하면 아바타·이름을 다시 그리지 않는다 - 자리만 좁게 남겨
+   두고, 그 자리에 마우스를 올렸을 때만 시각을 보여준다(슬랙과 같은 방식). */
+.msg.grouped { margin-bottom:2px; margin-top:-8px; }
+.msg.grouped .hover-time { display:none; font-size:10px; color:#8A8A8E; line-height:28px; }
+.msg.grouped:hover .hover-time { display:block; }
 
 /* 대화가 비어 있을 때의 안내 */
 .chat-empty { font-size:13px; color:#8A8A8E; margin:6px 0 14px; }
 
-/* 결과를 대화에도 한 줄로 남긴다 - 나중에 되짚어 볼 수 있게 */
-.result-line { border-left:3px solid #D8D8DA; padding:2px 0 2px 10px; }
-.result-line b { margin-right:2px; }
-.result-line.win-liar { border-left-color:#C93A3A; }
-.result-line.win-liar b { color:#791F1F; }
-.result-line.win-citizens { border-left-color:#2BAC76; }
-.result-line.win-citizens b { color:#27500A; }
-.result-line.win-none { border-left-color:#B9B9BE; }
-.result-line.win-none b { color:#5B5B60; }
+/* [요청] 결과를 팝업 대신 대화 속 카드로 남긴다 - 다른 시스템 안내와 같은 자리에,
+   다음 판을 시작한 뒤에도 되짚어 볼 수 있게. 이겼는지 졌는지에 따라 배경색이 다르다. */
+.result-card { margin-top:2px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; font-size:14px; }
+.result-card .headline { font-weight:700; font-size:16px; margin-bottom:6px; }
+.result-card .why { font-size:13px; color:#616061; }
+.result-card .facts { display:flex; flex-wrap:wrap; gap:8px; margin-top:11px; }
+.result-card .fact { display:inline-flex; align-items:center; gap:7px; background:rgba(255,255,255,.72); border:1px solid rgba(0,0,0,.07); border-radius:14px; padding:4px 12px; font-size:13px; }
+.result-card .fact .k { color:#616061; font-size:11.5px; }
+.result-card .fact b { font-weight:700; }
+.result-card.win-liar { background:#FCEBEB; border-color:#F0CFCF; color:#791F1F; }
+.result-card.win-citizens { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
+.result-card.win-none { background:#EDEDF0; border-color:#DFDFE3; color:#5B5B60; }
 
 /* 대화 안에 들여쓰여 붙는 진행 블록 (설명 / 자유 / 찬반 / 투표 / 정답) */
 #live-block:empty { display:none; }
@@ -131,20 +185,7 @@ input:disabled { opacity:.5; }
 .guess-row input { flex:1; height:34px; border:1px solid #D8D8DA; border-radius:6px; padding:0 10px; font-size:13px; }
 .guess-row button { padding:0 14px; border-radius:6px; border:1px solid #D8D8DA; background:#F5F5F7; cursor:pointer; font-size:13px; font-family:inherit; }
 
-/* ───────────────── 결과 / 배너 ───────────────── */
-#result-panel { margin:0 20px 14px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; font-size:15px; text-align:center; }
-#result-panel .headline { font-weight:700; font-size:17px; margin-bottom:6px; }
-#result-panel .why { font-size:13px; color:#616061; }
-/* 결과는 사실을 나란히 놓는다 - 누가 라이어였고, 제시어가 무엇이었는지 */
-#result-panel .facts { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; margin-top:11px; }
-#result-panel .fact { display:inline-flex; align-items:center; gap:7px; background:rgba(255,255,255,.72); border:1px solid rgba(0,0,0,.07); border-radius:14px; padding:4px 12px; font-size:13px; }
-#result-panel .fact .k { color:#616061; font-size:11.5px; }
-#result-panel .fact b { font-weight:700; }
-/* 같은 흰 카드면 이겼는지 졌는지 한눈에 안 들어온다 */
-#result-panel.win-liar { background:#FCEBEB; border-color:#F0CFCF; color:#791F1F; }
-#result-panel.win-citizens { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
-#result-panel.win-none { background:#EDEDF0; border-color:#DFDFE3; color:#5B5B60; }
-
+/* ───────────────── 배너 ───────────────── */
 #banner { font-size:13px; padding:8px 20px; text-align:center; }
 #banner.warn { background:#FCEBEB; color:#791F1F; }
 #banner.ok { background:#EAF3DE; color:#27500A; }
@@ -159,11 +200,17 @@ input:disabled { opacity:.5; }
 #jump-bar .arrow { margin-right:4px; }
 
 /* ───────────────── 입력창 ───────────────── */
-#composer { display:flex; gap:8px; padding:12px 20px; border-top:1px solid #E4E4E6; background:#fff; align-items:center; }
-#chat-input { flex:1; height:36px; border:1px solid #D8D8DA; border-radius:8px; padding:0 12px; font-size:13px; }
+#composer { display:flex; gap:8px; padding:12px 20px; border-top:1px solid #E4E4E6; background:#fff; align-items:flex-end; }
+/* [요청] 여러 줄로 늘어나는 입력창. 전송 버튼은 상자 안쪽 오른쪽 아래에 붙는다. */
+#composer-box { position:relative; flex:1; }
+#chat-input {
+  display:block; width:100%; max-height:160px; min-height:36px;
+  border:1px solid #D8D8DA; border-radius:8px; padding:8px 44px 8px 12px;
+  font-size:13px; font-family:inherit; line-height:1.4; resize:none; overflow-y:auto;
+}
 /* 슬랙 전송 버튼처럼 초록 원형 + 종이비행기 */
-#send-btn { width:36px; height:36px; flex-shrink:0; border:none; border-radius:8px; background:#007A5A; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; padding:0; }
-#send-btn svg { width:17px; height:17px; fill:#fff; }
+#send-btn { position:absolute; right:5px; bottom:5px; width:26px; height:26px; flex-shrink:0; border:none; border-radius:6px; background:#007A5A; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+#send-btn svg { width:14px; height:14px; fill:#fff; }
 #send-btn:not(:disabled):hover { background:#00603F; }
 #send-btn:disabled { background:#D8D8DA; }
 /* 내 설명 차례에는 입력창이 스스로 알린다 */
@@ -191,13 +238,12 @@ input:disabled { opacity:.5; }
 
   #role-card { margin:10px 14px 0; padding:10px 12px; }
   #chat { padding:10px 14px; }
-  #result-panel { margin:0 14px 10px; padding:12px; }
   #jump-bar { width:calc(100% - 28px); margin:0 14px 8px; }
   #composer { padding:10px 14px; }
 
   .opts, .guess-row { max-width:none; }
   .msg.my-turn { margin-left:-10px; padding-left:7px; }
-  #result-panel .facts { gap:6px; }
+  .result-card .facts { gap:6px; }
   .opt { padding:10px 12px; }
   .chip { padding:7px 13px 7px 11px; }
   .chip .em { font-size:17px; }

@@ -9,6 +9,23 @@
 </head>
 <body>
 
+  <!-- [요청] Electron 전용 커스텀 타이틀바. 웹(브라우저) 빌드에서는 계속 숨겨 둔다
+       (OS 창틀 자체가 없으므로 만들 이유도 없다). app.js가 window.liar.isElectron일 때만 보여준다. -->
+  <div id="titlebar" class="hidden">
+    <div id="titlebar-search"><input id="titlebar-search-input" placeholder="검색" disabled /></div>
+    <div id="titlebar-controls">
+      <button id="titlebar-min" class="titlebar-btn" title="최소화" aria-label="최소화">
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
+      <button id="titlebar-max" class="titlebar-btn" title="최대화" aria-label="최대화">
+        <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
+      <button id="titlebar-close" class="titlebar-btn titlebar-close" title="닫기" aria-label="닫기">
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
+    </div>
+  </div>
+
   <div id="screen-join">
     <h1 data-label="app">Slack</h1>
     <p>닉네임을 입력하고 접속하세요.</p>
@@ -56,18 +73,18 @@
         <div id="live-block"></div>
       </div>
 
-      <div id="result-panel" class="hidden"></div>
-
       <!-- [2번] 위로 스크롤해 있으면 진행 중이라고 알리는 얇은 띠 -->
       <button id="jump-bar" class="hidden">
         <span class="arrow">▼</span> <span id="jump-text">투표가 진행 중입니다</span>
       </button>
 
       <div id="composer">
-        <input id="chat-input" placeholder="댓글 남기기..." maxlength="300" autocomplete="off" />
-        <button id="send-btn" title="전송" aria-label="전송">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 18.5 19 10 1.5 1.5 1.5 8.2l12.4 1.8-12.4 1.8z"/></svg>
-        </button>
+        <div id="composer-box">
+          <textarea id="chat-input" placeholder="댓글 남기기..." maxlength="300" rows="1"></textarea>
+          <button id="send-btn" title="전송" aria-label="전송">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 18.5 19 10 1.5 1.5 1.5 8.2l12.4 1.8-12.4 1.8z"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>

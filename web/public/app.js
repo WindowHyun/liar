@@ -17,7 +17,7 @@
 var LABELS = {
   app: 'Slack',
   channel: '# Oliveyoung',
-  liar: 'Oliveyoung',
+  liar: '담당자',
 };
 
 var TOKEN_KEY = 'liar-game-token';
@@ -49,6 +49,19 @@ var pingSupported = true;
 var pongSeen = false;
 var pingSentAt = 0;
 var liveSignature = '';    // 진행 블록을 필요할 때만 다시 그리기 위한 지문
+var roleCardOpen = true;   // 역할 카드를 접었다 펼쳤다 - 새 라운드마다 다시 펼친 채로 시작한다
+
+// 사람마다 다른 아바타 색. 이름이 아니라 id로 고른다 - 닉네임이 같아도(중복 처리 전) 사람은 다르다.
+var AVATAR_PALETTE = ['#7F77DD', '#E07B53', '#2BAC76', '#1264A3', '#C93A3A', '#946200', '#00857A', '#8C5AC7'];
+function avatarColorFor(key) {
+  var s = String(key == null ? '' : key);
+  var hash = 0;
+  for (var i = 0; i < s.length; i += 1) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+// 연속으로 같은 사람이 친 대화는 아바타·이름을 한 번만 보여준다. 이 안에 있으면 같은 묶음.
+var GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 function $(id) { return document.getElementById(id); }
 
@@ -272,7 +285,6 @@ function leaveRoom() {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   $('chat-messages').innerHTML = '';
   $('live-block').innerHTML = '';
-  $('result-panel').classList.add('hidden');
   $('role-card').classList.add('hidden');
   $('jump-bar').classList.add('hidden');
   hideBanner();
@@ -288,11 +300,22 @@ $('vote-btn').onclick = function () { sendMessage({ type: 'callVote' }); };
 $('send-btn').onclick = function () {
   var text = $('chat-input').value.trim();
   if (!text) return;
-  if (sendMessage({ type: 'chat', text: text })) $('chat-input').value = '';
+  if (sendMessage({ type: 'chat', text: text })) { $('chat-input').value = ''; autoGrowComposer(); }
 };
 
 $('nickname-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') $('join-btn').click(); });
-$('chat-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') $('send-btn').click(); });
+
+// [요청] 입력창이 여러 줄로 늘어난다. Shift+Enter는 줄바꿈, Enter만 누르면 전송한다.
+var COMPOSER_MAX_HEIGHT = 160;
+function autoGrowComposer() {
+  var el = $('chat-input');
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px';
+}
+$('chat-input').addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('send-btn').click(); }
+});
+$('chat-input').addEventListener('input', autoGrowComposer);
 
 // 진행 블록(찬반/투표/정답)은 매번 새로 그리므로 위임으로 받는다.
 $('live-block').addEventListener('click', function (ev) {
@@ -359,35 +382,53 @@ function clockOf(at) {
   return ampm + ' ' + hh + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
-/** 슬랙의 메시지 한 덩어리(아바타 + 이름 + 시각 + 본문). 본문은 호출한 쪽이 채운다. */
+/**
+ * 슬랙의 메시지 한 덩어리(아바타 + 이름 + 시각 + 본문). 본문은 호출한 쪽이 채운다.
+ *
+ * [요청] 같은 사람이 연달아 말하면(opts.grouped) 아바타·이름·시각 줄을 다시 그리지 않는다.
+ * 대신 아바타 자리에 마우스를 올렸을 때만 보이는 시각을 남긴다 - 슬랙과 같은 방식이다.
+ */
 function messageShell(opts) {
   var wrap = document.createElement('div');
-  wrap.className = 'msg';
+  wrap.className = 'msg' + (opts.grouped ? ' grouped' : '');
 
-  var avatar = document.createElement('div');
-  avatar.className = opts.system ? 'avatar sys' : 'avatar';
-  avatar.textContent = opts.system ? '⚙️' : (opts.name || '?').slice(0, 2);
-  wrap.appendChild(avatar);
+  var slot = document.createElement('div');
+  slot.className = 'avatar-slot';
+  if (opts.grouped) {
+    var hoverTime = document.createElement('span');
+    hoverTime.className = 'hover-time';
+    hoverTime.textContent = opts.at ? clockOf(opts.at) : '';
+    slot.appendChild(hoverTime);
+  } else {
+    var avatar = document.createElement('div');
+    avatar.className = opts.system ? 'avatar sys' : 'avatar';
+    avatar.textContent = opts.system ? '⚙️' : (opts.name || '?').slice(0, 2);
+    if (!opts.system) avatar.style.background = avatarColorFor(opts.avatarKey || opts.name);
+    slot.appendChild(avatar);
+  }
+  wrap.appendChild(slot);
 
   var body = document.createElement('div');
   body.className = 'body';
 
-  var who = document.createElement('div');
-  who.className = 'who';
-  who.appendChild(document.createTextNode(opts.system ? 'System' : (opts.name || '(이름 없음)')));
-  if (opts.system) {
-    var tag = document.createElement('span');
-    tag.className = 'app-tag';
-    tag.textContent = '앱';
-    who.appendChild(tag);
+  if (!opts.grouped) {
+    var who = document.createElement('div');
+    who.className = 'who';
+    who.appendChild(document.createTextNode(opts.system ? 'Slack bot' : (opts.name || '(이름 없음)')));
+    if (opts.system) {
+      var tag = document.createElement('span');
+      tag.className = 'app-tag';
+      tag.textContent = '앱';
+      who.appendChild(tag);
+    }
+    if (opts.at) {
+      var time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = clockOf(opts.at);
+      who.appendChild(time);
+    }
+    body.appendChild(who);
   }
-  if (opts.at) {
-    var time = document.createElement('span');
-    time.className = 'time';
-    time.textContent = clockOf(opts.at);
-    who.appendChild(time);
-  }
-  body.appendChild(who);
   wrap.appendChild(body);
 
   wrap.body = body;
@@ -403,24 +444,36 @@ function mentionsMe(m) {
   return false;
 }
 
+// [요청] **굵게**, `인라인 코드`, ~~취소선~~을 실제 서식으로 그린다. 순서는 먼저 매치되는 쪽이 이긴다.
+var FORMATS = [
+  { delim: '**', tag: 'b' },
+  { delim: '~~', tag: 's' },
+  { delim: '`', tag: 'code' },
+];
+
 /**
- * [요청] 대화 속 "@닉네임"을 눈에 띄게 그린다.
+ * [요청] 대화 속 "@닉네임"과 굵게·코드·취소선 서식을 함께 눈에 띄게 그린다.
  *
- * 누구를 부른 것인지는 서버가 정해서 내려준다(mentions). 화면은 그 이름이 나온 자리만
- * 찾아 감싼다. 문자열을 직접 붙이지 않고 노드로 쌓는 이유는, 닉네임에 무엇이 들어 있든
- * 그대로 글자로만 보이게 하기 위해서다.
+ * 누구를 부른 것인지는 서버가 정해서 내려준다(mentions). 화면은 그 이름이 나온 자리와
+ * 서식 기호로 감싸인 자리만 찾아 바꾼다. 문자열을 직접 붙이지 않고 노드로만 쌓는 이유는,
+ * 닉네임이나 대화 내용에 무엇이 들어 있든 그대로 글자로만 보이게 하기 위해서다
+ * (innerHTML을 쓰지 않으므로 "<b>"처럼 생긴 글자를 쳐도 실제 태그로 새지 않는다).
  */
 function chatText(m) {
   var box = document.createElement('div');
   box.className = 'text';
-  var text = m.text == null ? '' : m.text;
   var names = (m.mentions || []).map(function (x) { return x.nickname; })
     .filter(Boolean)
     .sort(function (a, b) { return b.length - a.length; }); // 겹치면 긴 쪽부터 (서버와 같은 규칙)
+  appendFormatted(box, m.text == null ? '' : m.text, names);
+  return box;
+}
 
-  if (names.length === 0) { box.textContent = text; return box; }
-
+/** @멘션과 서식 기호를 함께 인식해 노드로 쌓는다. 코드 안은 다시 해석하지 않는다. */
+function appendFormatted(box, text, names) {
   var buf = '';
+  function flush() { if (buf) { box.appendChild(document.createTextNode(buf)); buf = ''; } }
+
   for (var i = 0; i < text.length;) {
     var hit = null;
     if (text[i] === '@') {
@@ -428,16 +481,42 @@ function chatText(m) {
         if (text.slice(i + 1, i + 1 + names[n].length) === names[n]) { hit = names[n]; break; }
       }
     }
-    if (!hit) { buf += text[i]; i += 1; continue; }
-    if (buf) { box.appendChild(document.createTextNode(buf)); buf = ''; }
-    var chip = document.createElement('span');
-    chip.className = 'mention';
-    chip.textContent = '@' + hit;
-    box.appendChild(chip);
-    i += 1 + hit.length;
+    if (hit) {
+      flush();
+      var chip = document.createElement('span');
+      chip.className = 'mention';
+      chip.textContent = '@' + hit;
+      box.appendChild(chip);
+      i += 1 + hit.length;
+      continue;
+    }
+
+    var fmt = null;
+    var closeAt = -1;
+    for (var f = 0; f < FORMATS.length; f += 1) {
+      var d = FORMATS[f].delim;
+      if (text.slice(i, i + d.length) !== d) continue;
+      var close = text.indexOf(d, i + d.length);
+      if (close === -1 || close === i + d.length) continue; // 닫는 기호가 없거나 안이 비어 있으면 그냥 글자
+      fmt = FORMATS[f];
+      closeAt = close;
+      break;
+    }
+    if (fmt) {
+      flush();
+      var inner = text.slice(i + fmt.delim.length, closeAt);
+      var el = document.createElement(fmt.tag);
+      if (fmt.tag === 'code') el.textContent = inner;
+      else appendFormatted(el, inner, names); // 굵게·취소선 안의 @멘션은 계속 인식한다
+      box.appendChild(el);
+      i = closeAt + fmt.delim.length;
+      continue;
+    }
+
+    buf += text[i];
+    i += 1;
   }
-  if (buf) box.appendChild(document.createTextNode(buf));
-  return box;
+  flush();
 }
 
 /** 사람 이름과 위장 단어를 강조한 한 줄. 서버가 준 code로 화면이 문구를 만든다. */
@@ -459,24 +538,16 @@ function systemLine(m) {
   }
 
   if (m.code === 'accused' && m.who) {
-    // 요청: "System : ○○○이 (라이어)로 지목되었습니다"
+    // 요청: "Slack bot : ○○○이 (담당자)로 지목되었습니다"
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 '));
     p.appendChild(liar());
-    p.appendChild(document.createTextNode('으로 지목되었습니다.'));
+    p.appendChild(document.createTextNode(josa(LABELS.liar, '으로', '로') + ' 지목되었습니다.'));
   } else if (m.code === 'proposalCalled' && m.who) {
     p.appendChild(who(m.who));
     p.appendChild(document.createTextNode('님이 투표를 제안했습니다.'));
   } else if (m.code === 'result') {
-    p.className = 'text result-line ' + (m.winner === 'liar' ? 'win-liar' : m.winner === 'citizens' ? 'win-citizens' : 'win-none');
-    var head = document.createElement('b');
-    head.textContent = m.winner === 'liar' ? LABELS.liar + ' 승리'
-      : m.winner === 'citizens' ? '시민 팀 승리' : '라운드 취소';
-    p.appendChild(head);
-    var tail = document.createElement('span');
-    tail.textContent = '  ' + LABELS.liar + josa(LABELS.liar, '은 ', '는 ') + m.liarName
-      + '님, 제시어는 "' + m.word + '"' + josa(m.word, '이었습니다.', '였습니다.');
-    p.appendChild(tail);
+    return buildResultCard(m);
   } else if (m.code === 'speakRoundStart') {
     p.textContent = m.speakRound + '차 설명을 시작합니다.';
   } else if (m.code === 'turnSkipped' && m.who) {
@@ -508,6 +579,53 @@ function systemLine(m) {
   return p;
 }
 
+/**
+ * [요청] 결과를 팝업 카드 대신 대화 속 시스템 메시지로 남긴다.
+ *
+ * 예전에는 화면 아래 별도 카드(#result-panel)로 떴다. 다른 안내(System)와 다르게 생겨서
+ * 눈에 잘 안 띄고, 다음 판을 시작하면 사라져 되짚어 볼 수도 없었다. 이제는 다른 시스템
+ * 메시지와 같은 자리에, 다만 더 자세한 카드 모양으로 대화 기록에 그대로 남는다.
+ */
+function buildResultCard(m) {
+  var card = document.createElement('div');
+  card.className = 'text result-card '
+    + (m.winner === 'liar' ? 'win-liar' : m.winner === 'citizens' ? 'win-citizens' : 'win-none');
+
+  var headline = document.createElement('div');
+  headline.className = 'headline';
+  headline.textContent = m.winner === 'liar' ? LABELS.liar + ' 승리!'
+    : m.winner === 'citizens' ? '시민 팀 승리!' : '라운드 취소';
+  card.appendChild(headline);
+
+  var reasons = {
+    tie: '투표가 동점이었습니다.',
+    noVotes: '제한 시간 안에 아무도 투표하지 않았습니다.',
+    wrongAccusation: LABELS.liar + josa(LABELS.liar, '은 ', '는 ')
+      + (m.accused ? m.accused.nickname : '지목된 사람') + '님이 아닙니다.',
+    guessTimeout: LABELS.liar + josa(LABELS.liar, '이 ', '가 ') + '제한 시간 안에 제시어를 맞히지 못했습니다.',
+    // 불리해졌다고 창을 닫아 버리면 진 것으로 본다.
+    liarLeft: m.liarName + '님이 ' + LABELS.liar + josa(LABELS.liar, '이었는데 ', '였는데 ')
+      + '도중에 나갔습니다.',
+    hostLeft: '게임을 진행하던 사람의 접속이 끊겨 라운드가 취소되었습니다.',
+    guess: m.winner === 'liar'
+      ? LABELS.liar + josa(LABELS.liar, '이 ', '가 ') + '제시어를 맞혔습니다!'
+      : LABELS.liar + josa(LABELS.liar, '이 ', '가 ') + '제시어를 맞히지 못했습니다.',
+  };
+  var why = document.createElement('div');
+  why.className = 'why';
+  why.textContent = reasons[m.reason] || '';
+  card.appendChild(why);
+
+  var facts = document.createElement('div');
+  facts.className = 'facts';
+  facts.appendChild(fact(LABELS.liar, m.liarName + '님'));
+  facts.appendChild(fact('제시어', m.word));
+  if (m.guess) facts.appendChild(fact('제출한 답', m.guess));
+  card.appendChild(facts);
+
+  return card;
+}
+
 function renderChat(s) {
   // 길이로만 판단하면 안 된다. 대화가 상한(100줄)에 닿은 뒤로는 한 줄 밀어내고 한 줄
   // 넣느라 길이가 계속 100이라, 그 시점부터 새 글이 화면에 안 붙는다.
@@ -532,17 +650,25 @@ function renderChat(s) {
     box.appendChild(empty);
   }
 
+  // [요청] 같은 사람이 짧은 간격을 두고 연달아 말하면 아바타·이름을 한 번만 보여준다.
+  var prevChatId = null;
+  var prevChatAt = 0;
   s.chat.forEach(function (m) {
     // 투표 제안은 아래 진행 블록이 같은 내용을 보여준다. 두 번 찍히지 않게 건너뛴다.
     // (제안의 결말인 "진행합니다 / 부결되었습니다"는 기록으로 남긴다.)
     if (m.code === 'proposalCalled') return;
-    var shell = messageShell({ system: m.kind === 'system', name: m.name, at: m.at });
-    if (m.kind === 'system') {
+    var isSystem = m.kind === 'system';
+    var grouped = !isSystem && prevChatId === m.id && (m.at - prevChatAt) < GROUP_WINDOW_MS;
+    var shell = messageShell({ system: isSystem, name: m.name, at: m.at, grouped: grouped, avatarKey: m.id });
+    if (isSystem) {
       shell.body.appendChild(systemLine(m));
+      prevChatId = null; // 시스템 안내가 끼면 묶음이 끊긴다
     } else {
       shell.body.appendChild(chatText(m));
       // 나를 부른 말은 한눈에 보여야 한다. 안 그러면 대화가 빠를 때 그냥 지나간다.
       if (mentionsMe(m)) shell.classList.add('mentions-me');
+      prevChatId = m.id;
+      prevChatAt = m.at;
     }
     box.appendChild(shell);
   });
@@ -796,6 +922,7 @@ function buildVote(s) {
       var mini = document.createElement('span');
       mini.className = 'mini';
       mini.textContent = p.nickname.slice(0, 2);
+      mini.style.background = avatarColorFor(p.id);
       b.appendChild(mini);
       b.appendChild(document.createTextNode(p.nickname));
       opts.appendChild(b);
@@ -874,6 +1001,20 @@ function renderParticipants(s) {
     if (!p.connected) li.className = 'offline';
     else if (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound) li.className = 'spectator';
 
+    // [요청] 이름 앞에 사람마다 다른 색의 아바타 + 우하단에 접속 상태 배지.
+    // 실제로 구분할 수 있는 상태는 연결됨/끊김 두 가지뿐이다(자리비움 같은 중간 상태는 없다).
+    var avatarWrap = document.createElement('span');
+    avatarWrap.className = 'p-avatar-wrap';
+    var avatar = document.createElement('span');
+    avatar.className = 'p-avatar';
+    avatar.style.background = avatarColorFor(p.id);
+    avatar.textContent = p.nickname.slice(0, 2);
+    var badge = document.createElement('span');
+    badge.className = 'p-badge ' + (p.connected ? 'online' : 'offline');
+    avatarWrap.appendChild(avatar);
+    avatarWrap.appendChild(badge);
+    li.appendChild(avatarWrap);
+
     var name = document.createElement('span');
     name.className = 'name';
     name.textContent = p.nickname + (p.id === myId ? ' (나)' : '');
@@ -908,65 +1049,57 @@ function renderTally(s) {
   el.textContent = s.record.rounds + '판 · ' + LABELS.liar + ' ' + s.record.liarWins + ' / 시민 ' + s.record.citizenWins;
 }
 
+/**
+ * [요청] 본인에게만 보이는 역할 카드. 클릭하면 접었다 펼 수 있다.
+ *
+ * 접혀도 "누구인지" 한 줄(head)은 그대로 보인다 - 지금 내가 무슨 카드를 보고 있는지는
+ * 알아야 하기 때문이다. 접으면 카테고리·제시어 같은 자세한 내용(detail)만 사라진다.
+ */
 function renderRoleCard(s) {
   var card = $('role-card');
   if (s.phase === 'lobby' || s.phase === 'result' || !s.you || !s.you.inRound) {
     card.classList.add('hidden');
+    card.onclick = null;
     return;
   }
+  if (card.classList.contains('hidden')) roleCardOpen = true; // 새로 나타날 때는 펼친 채로 시작한다
   card.classList.remove('hidden');
   if (s.you.isLiar) {
-    card.className = 'liar';
-    card.textContent = '당신은 ' + LABELS.liar + '입니다. 카테고리: ' + s.you.category + ' (제시어는 모릅니다)';
+    buildRoleCard(card, 'liar', LABELS.liar + ': ' + s.you.nickname + '님',
+      '카테고리: ' + s.you.category + ' (제시어는 모릅니다)');
   } else if (s.you.word) {
-    card.className = 'citizen';
-    card.textContent = '카테고리: ' + s.you.category + ' / 제시어: ' + s.you.word;
+    buildRoleCard(card, 'citizen', '카테고리: ' + s.you.category, '제시어: ' + s.you.word);
   } else {
     card.className = 'pending';
+    card.onclick = null;
     card.textContent = '역할을 받는 중입니다...';
   }
 }
 
-function renderResult(s) {
-  var panel = $('result-panel');
-  if (s.phase !== 'result' || !s.result) { panel.classList.add('hidden'); return; }
+function buildRoleCard(card, kind, headText, detailText) {
+  card.className = kind;
+  card.innerHTML = '';
+  card.onclick = function () { roleCardOpen = !roleCardOpen; renderRoleCard(state); };
 
-  var r = s.result;
-  var reasons = {
-    tie: '투표가 동점이었습니다.',
-    noVotes: '제한 시간 안에 아무도 투표하지 않았습니다.',
-    wrongAccusation: (r.accused ? r.accused.nickname + '님은 ' : '지목된 사람은 ') + LABELS.liar + '이 아니었습니다.',
-    guessTimeout: LABELS.liar + '이 제한 시간 안에 제시어를 맞히지 못했습니다.',
-    // 불리해졌다고 창을 닫아 버리면 진 것으로 본다.
-    liarLeft: r.liar.nickname + '님이 ' + LABELS.liar + josa(LABELS.liar, '이었는데 ', '였는데 ')
-      + '도중에 나갔습니다.',
-    hostLeft: '게임을 진행하던 사람의 접속이 끊겨 라운드가 취소되었습니다.',
-    guess: r.winner === 'liar'
-      ? LABELS.liar + '이 제시어를 맞혔습니다!'
-      : LABELS.liar + '이 제시어를 맞히지 못했습니다.',
-  };
+  var head = document.createElement('div');
+  head.className = 'role-head';
+  var chev = document.createElement('span');
+  chev.className = 'chev';
+  chev.textContent = roleCardOpen ? '▾' : '▸';
+  head.appendChild(chev);
+  var line = document.createElement('span');
+  line.className = 'role-line';
+  line.textContent = headText;
+  head.appendChild(line);
+  card.appendChild(head);
 
-  // 승패에 따라 색이 달라진다. 같은 흰 카드면 이겼는지 졌는지 한눈에 안 들어온다.
-  panel.className = r.winner === 'liar' ? 'win-liar' : r.winner === 'citizens' ? 'win-citizens' : 'win-none';
-  panel.innerHTML = '';
-
-  var headline = document.createElement('div');
-  headline.className = 'headline';
-  headline.textContent = r.winner === 'liar' ? LABELS.liar + ' 승리!'
-    : r.winner === 'citizens' ? '시민 팀 승리!' : '라운드 취소';
-  panel.appendChild(headline);
-
-  var why = document.createElement('div');
-  why.className = 'why';
-  why.textContent = reasons[r.reason] || '';
-  panel.appendChild(why);
-
-  var facts = document.createElement('div');
-  facts.className = 'facts';
-  facts.appendChild(fact(LABELS.liar, r.liar.nickname));
-  facts.appendChild(fact('제시어', r.word));
-  if (r.guess) facts.appendChild(fact('제출한 답', r.guess));
-  panel.appendChild(facts);
+  if (roleCardOpen) {
+    card.appendChild(document.createTextNode('\n')); // head/detail의 글자가 붙어 읽히지 않게
+    var detail = document.createElement('div');
+    detail.className = 'role-line role-detail';
+    detail.textContent = detailText;
+    card.appendChild(detail);
+  }
 }
 
 function fact(label, value) {
@@ -1061,10 +1194,8 @@ function render(s) {
   // (예전에 "방이 리셋될 때까지 채팅이 안 된다"는 신고가 이런 모양이었다.)
   applyComposer(s);
 
-  // 결과 카드가 뜨면 대화 영역이 그만큼 줄어든다. 대화를 다 그린 뒤에 카드가 붙기 때문에,
-  // 그리기 직전에 맨 아래를 보고 있었다면 다 그린 다음 한 번 더 내려야 한다.
-  // 안 그러면 방금 나온 "○○님이 지목되었습니다"와 결과 줄이 화면 밖으로 밀려서,
-  // 정작 읽어야 할 순간에 손으로 스크롤해야 한다.
+  // 역할 카드가 뜨거나 배너가 붙으면 그만큼 대화 영역 높이가 바뀐다. 그리기 직전에
+  // 맨 아래를 보고 있었다면, 다 그린 뒤에도 맨 아래를 보고 있도록 한 번 더 내린다.
   var wasAtBottom = isChatAtBottom();
 
   try {
@@ -1073,7 +1204,6 @@ function render(s) {
     renderRoleCard(s);
     renderChat(s);
     renderLive(s);
-    renderResult(s);
   } catch (err) {
     // 조용히 삼키지 않는다. 화면은 계속 쓸 수 있게 두되, 원인은 남긴다.
     console.error('화면을 그리는 중 문제가 생겼습니다:', err);
@@ -1104,6 +1234,18 @@ function render(s) {
     tickTimer = setInterval(function () { if (state) refreshLiveTimers(state); }, 1000);
   }
   updateJumpBar();
+}
+
+// [요청] Electron에서는 OS 창틀 대신 슬랙처럼 화면 안에 그린 타이틀바를 쓴다.
+// 웹(브라우저) 버전에는 windowControl 자체가 없으므로 자연히 숨겨진 채로 남는다.
+if (window.liar && window.liar.isElectron && window.liar.windowControl) {
+  $('titlebar').classList.remove('hidden');
+  $('titlebar-min').onclick = function () { window.liar.windowControl.minimize(); };
+  $('titlebar-max').onclick = function () { window.liar.windowControl.maximize(); };
+  $('titlebar-close').onclick = function () { window.liar.windowControl.close(); };
+  window.liar.windowControl.onMaximizedChange(function (isMaximized) {
+    $('titlebar-max').classList.toggle('is-maximized', !!isMaximized);
+  });
 }
 
 // Electron이 올려 주는 알림(버전 불일치 등)을 배너로 띄운다.

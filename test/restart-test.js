@@ -85,7 +85,7 @@ async function finishRound(ps, starter) {
   await Promise.all(ps.map((p) => p.page.waitForFunction(
     () => document.querySelector('#live-block').textContent.includes('자유 대화 중'), null, { timeout: 8000 })));
   const cards = await Promise.all(ps.map((p) => p.page.textContent('#role-card')));
-  const liar = ps[cards.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const liar = ps[cards.findIndex((c) => c.includes('담당자: '))];
   const citizens = ps.filter((p) => p !== liar);
   await starter.page.click('#vote-btn');
   await Promise.all(ps.map((p) => p.page.waitForSelector('#live-block .chip', { timeout: 8000 })));
@@ -100,7 +100,7 @@ async function finishRound(ps, starter) {
   await liar.page.waitForSelector('#guess-input', { timeout: 8000 });
   await liar.page.fill('#guess-input', '엉뚱한답');
   await liar.page.press('#guess-input', 'Enter');
-  await Promise.all(ps.map((p) => p.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 8000 })));
+  await Promise.all(ps.map((p) => p.page.waitForSelector('.result-card', { timeout: 8000 })));
   return liar;
 }
 
@@ -144,13 +144,14 @@ async function finishRound(ps, starter) {
   await wait(400);
   const cards2 = await Promise.all(players.map((p) => p.page.textContent('#role-card')));
   check('C1 새 판에서 라이어가 다시 정해진다',
-    cards2.filter((c) => c.includes('당신은 Oliveyoung입니다')).length === 1);
+    cards2.filter((c) => c.includes('담당자: ')).length === 1);
   check('C1 새 판은 1차 설명부터 시작한다',
     (await p1.page.textContent('#live-block .round-badge')).trim() === '1차');
   check('C1 전원이 다시 대기 상태다 (앞판 완료 표시가 남지 않는다)',
     !(await p1.page.textContent('#live-block .track')).includes('✅'),
     (await p1.page.textContent('#live-block .track')).replace(/\s+/g, ' ').trim());
-  check('C1 결과 카드가 사라진다', await p1.page.isHidden('#result-panel'));
+  // [요청] 결과는 팝업이 아니라 대화 속 카드로 남는다 - 다음 판이 시작해도 사라지지 않는다.
+  check('C1 지난 결과 카드는 대화 기록으로 남아 있다', (await p1.page.locator('.result-card').count()) === 1);
   check('C1 앞판 기록은 대화에 남아 있다',
     (await p1.page.textContent('#chat-messages')).includes('시민 팀 승리'));
   check('C1 전적은 그대로 유지된다', (await p1.page.textContent('#tally-label')).includes('1판'));
@@ -163,13 +164,15 @@ async function finishRound(ps, starter) {
 
   // ─────────────────────────────────────────────────────────────
   log('\n━━━━━━━ 케이스 2: 중간에 라이어 퇴장 → 종료 → 다시 시작 ━━━━━━━');
-  const liar2 = players[cards2.findIndex((c) => c.includes('당신은 Oliveyoung입니다'))];
+  const liar2 = players[cards2.findIndex((c) => c.includes('담당자: '))];
   const rest = players.filter((p) => p !== liar2);
   await passTurns(players); // 자유 대화까지 진행한 뒤
   log(`  라이어 ${liar2.name}님이 게임 도중 [방 나가기]`);
   await liar2.page.click('#leave-btn');
-  await Promise.all(rest.map((p) => p.page.waitForSelector('#result-panel:not(.hidden)', { timeout: 8000 })));
-  const panel2 = await rest[0].page.textContent('#result-panel');
+  // 이번이 두 번째 결과 카드다(첫 번째는 케이스 1에서 이미 남았다).
+  await Promise.all(rest.map((p) => p.page.waitForFunction(
+    () => document.querySelectorAll('.result-card').length > 1, null, { timeout: 8000 })));
+  const panel2 = await rest[0].page.locator('.result-card').last().textContent();
   check('C2 라이어가 나가면 그 자리에서 판이 끝난다', panel2.includes('시민 팀 승리'),
     panel2.replace(/\s+/g, ' ').trim().slice(0, 60));
   check('C2 누가 라이어였는지 밝혀진다', panel2.includes(liar2.name) && panel2.includes('도중에 나갔습니다'));
@@ -217,7 +220,7 @@ async function finishRound(ps, starter) {
   const backCount = (await p1.page.textContent('#member-count')).trim();
   check('C3 전원이 새 방에 다시 모인다', backCount === '5', `${backCount}명`);
   check('C3 새 방은 로비 상태다 (앞판이 남아 있지 않다)',
-    await p1.page.isVisible('#start-btn') && await p1.page.isHidden('#result-panel'));
+    await p1.page.isVisible('#start-btn') && (await p1.page.locator('.result-card').count()) === 0);
   check('C3 유령이 남지 않는다',
     (await p1.page.locator('#participant-list li').count()) === 5,
     `${await p1.page.locator('#participant-list li').count()}명`);
@@ -238,7 +241,7 @@ async function finishRound(ps, starter) {
   await wait(400);
   const cards4 = await Promise.all(players.map((p) => p.page.textContent('#role-card')));
   check('C3 새 판이 정상적으로 굴러간다',
-    cards4.filter((c) => c.includes('당신은 Oliveyoung입니다')).length === 1
+    cards4.filter((c) => c.includes('담당자: ')).length === 1
     && (await p1.page.textContent('#live-block .round-badge')).trim() === '1차');
   const sp = await speaker(players);
   check('C3 대화권도 정상 동작한다', !!sp, sp ? `${sp.name} 차례` : '차례인 사람 없음');
