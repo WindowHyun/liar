@@ -38,7 +38,7 @@
     <div id="sidebar">
       <h2 data-label="app">Slack</h2>
       <p class="sub">워크스페이스</p>
-      <p class="label" data-label="liar">Oliveyoung</p>
+      <p class="label">다이렉트 메시지</p>
       <ul id="participant-list"></ul>
       <div id="sidebar-foot">
         <button id="leave-btn" title="방에서 나갑니다">방 나가기</button>
@@ -61,7 +61,9 @@
           <button id="vote-btn" title="투표 시작" disabled>
             <span class="em">🎧</span>
           </button>
-          <button id="start-btn">게임 시작</button>
+          <button id="start-btn" title="게임 시작" aria-label="게임 시작">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
         </div>
       </div>
 

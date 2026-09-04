@@ -264,7 +264,7 @@ async function roundInProgressHandover() {
   await Promise.all(pages.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 8000 })));
   const cards = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
   check('B6 새 판이 정상적으로 굴러간다',
-    cards.filter((c) => c.includes('담당자: ')).length === 1
+    cards.filter((c) => c.includes('담당자입니다')).length === 1
     && (await pages[0].page.textContent('#live-block .round-badge')).trim() === '1차',
     cards.map((c) => c.slice(0, 12)).join(' / '));
 

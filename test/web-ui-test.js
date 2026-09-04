@@ -148,16 +148,16 @@ async function main() {
   await Promise.all(pages.map((p) => p.page.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 })));
 
   const cards = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
-  const liars = cards.filter((c) => c.includes('담당자: '));
+  const liars = cards.filter((c) => c.includes('담당자입니다'));
   check('X2 라이어는 정확히 한 명', liars.length === 1, `${liars.length}명`);
   check('X2 라이어 화면에는 제시어가 없다', liars[0].includes('제시어는 모릅니다'));
 
-  const citizenCards = cards.filter((c) => !c.includes('담당자: '));
+  const citizenCards = cards.filter((c) => !c.includes('담당자입니다'));
   const word = citizenCards[0].split('제시어: ')[1].trim();
   check('X2 시민 두 명은 같은 제시어를 본다', citizenCards.every((c) => c.includes(word)), `제시어=${word}`);
 
   // 라이어의 브라우저 어디에도 제시어가 없어야 한다
-  const liarIndex = cards.findIndex((c) => c.includes('담당자: '));
+  const liarIndex = cards.findIndex((c) => c.includes('담당자입니다'));
   const liarHtml = await pages[liarIndex].page.content();
   check('X2 라이어 브라우저 전체에 제시어가 없다', !liarHtml.includes(word));
 
@@ -316,8 +316,8 @@ async function main() {
   check('X8 전적이 사이드바 하단에 버전처럼 표시된다',
     (await p1.page.textContent('#tally-label')).includes('판 ·'),
     (await p1.page.textContent('#tally-label')).trim());
-  check('X8 사이드바 목록 제목이 담당자다',
-    (await p1.page.textContent('#sidebar .label')).trim() === '담당자');
+  check('X8 [요청] 사이드바 목록 제목이 다이렉트 메시지다',
+    (await p1.page.textContent('#sidebar .label')).trim() === '다이렉트 메시지');
   check('X8 인원수가 허들 버튼 왼쪽에 숫자로 나온다',
     (await p1.page.textContent('#member-count')).trim() === '3');
   check('X8 투표 버튼이 헤드셋이다',
@@ -334,7 +334,7 @@ async function main() {
 
   // 라이어가 나가면 판이 취소되므로, 판이 이어지는지 보려면 시민이 나가야 한다.
   const cards2 = await Promise.all(pages.map((p) => p.page.textContent('#role-card')));
-  const liar2 = pages[cards2.findIndex((c) => c.includes('담당자: '))];
+  const liar2 = pages[cards2.findIndex((c) => c.includes('담당자입니다'))];
   const citizens = pages.filter((p) => p !== liar2);
 
   await citizens[0].page.click('#leave-btn');
@@ -370,7 +370,7 @@ async function main() {
   const here = [liar2, citizens[0]];
   await Promise.all(here.map((p) => p.page.waitForSelector('#live-block .track .pill', { timeout: 5000 })));
   const cards3 = await Promise.all(here.map((p) => p.page.textContent('#role-card')));
-  const liar3 = here[cards3.findIndex((c) => c.includes('담당자: '))];
+  const liar3 = here[cards3.findIndex((c) => c.includes('담당자입니다'))];
   const stays = here.find((p) => p !== liar3);
 
   await liar3.page.click('#leave-btn');
@@ -765,16 +765,37 @@ async function slackLookCheck(browser) {
   // 아래 대화 관련 확인들은 로비 단계에서 한다 - 라운드가 시작되면 대화권이 있는
   // 사람만 입력창을 쓸 수 있어서(1인 1회), 자유롭게 여러 번 치는 확인과는 안 맞는다.
 
-  // ── 아바타 색: 서로 다른 사람은 다른 색 ──
+  // ── 아바타 색: 사람(id)마다 정해진 색 ──
+  // 팔레트가 8색뿐이라, 실제 두 사람의 무작위 id가 우연히 같은 색으로 겹칠 수도 있다
+  // (그 자체는 버그가 아니다). 그래서 먼저 색을 고르는 함수 자체가 서로 다른 키에는
+  // 다른 색을, 같은 키에는 항상 같은 색을 주는지를 직접 확인하고, 이어서 화면에 그려진
+  // 아바타 색이 실제로 그 사람의 id로 계산한 색과 일치하는지(제대로 연결됐는지)를 본다.
+  const fnCheck = await a.evaluate(() => ({
+    same: window.avatarColorFor('player-A') === window.avatarColorFor('player-A'),
+    different: window.avatarColorFor('player-A') !== window.avatarColorFor('player-B'),
+  }));
+  check('X18 [요청] 같은 사람은 항상 같은 색, 다른 사람은 다른 색을 주는 함수다',
+    fnCheck.same && fnCheck.different, JSON.stringify(fnCheck));
+
   await a.fill('#chat-input', '안녕하세요');
   await a.press('#chat-input', 'Enter');
   await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('안녕하세요'), null, { timeout: 5000 });
   await b.fill('#chat-input', '반갑습니다');
   await b.press('#chat-input', 'Enter');
   await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('반갑습니다'), null, { timeout: 5000 });
-  const avatarColors = await a.evaluate(() => [...document.querySelectorAll('#chat-messages .avatar:not(.sys)')].map((el) => el.style.background));
-  check('X18 [요청] 사람마다 다른 아바타 색이다',
-    avatarColors.length >= 2 && avatarColors[0] !== avatarColors[1], avatarColors.join(' / '));
+
+  const myId = await a.evaluate(() => window.state.you.id);
+  const wired = await a.evaluate((id) => {
+    var expected = window.avatarColorFor(id);
+    var probe = document.createElement('div');
+    probe.style.background = expected;
+    document.body.appendChild(probe);
+    var normalizedExpected = getComputedStyle(probe).backgroundColor;
+    document.body.removeChild(probe);
+    var mine = document.querySelector('#chat-messages .avatar:not(.sys)');
+    return mine ? mine.style.background === normalizedExpected : false;
+  }, myId);
+  check('X18 [요청] 화면에 그려진 아바타 색이 실제로 그 사람의 id로 계산한 색이다', wired);
 
   // ── 연속 발언 묶기: 같은 사람이 바로 이어 말하면 아바타·이름이 한 번만 ──
   await a.fill('#chat-input', '연속 첫 줄');
@@ -789,7 +810,8 @@ async function slackLookCheck(browser) {
   // ── 서식: **굵게** · `코드` · ~~취소선~~ ──
   await a.fill('#chat-input', '**굵게** `코드` ~~취소선~~');
   await a.press('#chat-input', 'Enter');
-  await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('코드'), null, { timeout: 5000 });
+  // 아래에서 a의 화면을 읽으므로 b가 아니라 a 자신이 다 그릴 때까지 기다린다.
+  await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('코드'), null, { timeout: 5000 });
   const lastMsgText = await a.locator('#chat-messages .msg .text').last();
   check('X18 [요청] **굵게**가 실제 <b>로 그려진다',
     (await lastMsgText.locator('b').count()) === 1 && (await lastMsgText.locator('b').innerText()) === '굵게');
@@ -799,6 +821,21 @@ async function slackLookCheck(browser) {
     (await lastMsgText.locator('s').count()) === 1 && (await lastMsgText.locator('s').innerText()) === '취소선');
   check('X18 서식 기호(*, `, ~) 자체는 화면에 남지 않는다',
     !(await lastMsgText.innerText()).includes('*') && !(await lastMsgText.innerText()).includes('~'));
+
+  // ── 글자 색: :이름[글자] (미리 정한 색) · :#RGB[글자] (직접 지정한 색) ──
+  await a.fill('#chat-input', ':red[빨강] :#00ff00[커스텀] :bogus[그냥글자]');
+  await a.press('#chat-input', 'Enter');
+  await a.waitForFunction(() => document.querySelector('#chat').textContent.includes('커스텀'), null, { timeout: 5000 });
+  const colorMsg = await a.locator('#chat-messages .msg .text').last();
+  const spans = await colorMsg.evaluate((el) => [...el.querySelectorAll('span')]
+    .filter((s) => s.style.color)
+    .map((s) => ({ color: s.style.color, text: s.textContent })));
+  check('X18 [요청] :이름[글자]가 미리 정한 색으로 그려진다',
+    spans.some((s) => s.text === '빨강' && s.color === 'rgb(201, 58, 58)'), JSON.stringify(spans));
+  check('X18 [요청] :#RRGGBB[글자]가 그 16진수 색으로 그려진다',
+    spans.some((s) => s.text === '커스텀' && s.color === 'rgb(0, 255, 0)'), JSON.stringify(spans));
+  check('X18 정의되지 않은 이름은 색 없이 글자 그대로 남는다',
+    (await colorMsg.innerText()).includes(':bogus[그냥글자]'));
 
   // ── 입력창: Shift+Enter는 줄바꿈, Enter는 전송 ──
   await a.fill('#chat-input', '한 줄');
@@ -830,20 +867,27 @@ async function slackLookCheck(browser) {
     colorA === colorB, `${colorA} vs ${colorB}`);
 
   // ── 역할 카드 접었다 펼치기 ──
-  // 라이어 카드는 "담당자: 이름"이 머리글, "카테고리: ..."가 접히는 상세다.
-  // 시민 카드는 "카테고리: ..."가 머리글, "제시어: ..."가 접히는 상세다. 역할에 따라
-  // 접었을 때 사라져야 하는 글자가 다르므로, 어느 쪽인지 먼저 확인하고 맞는 쪽을 본다.
+  // [요청] 접힌 머리글은 역할과 무관하게 항상 "카테고리: ..."뿐이다 - 옆에서 봐서는
+  // 라이어인지조차 알 수 없다. 펼쳐야만 라이어 여부와 제시어(또는 모른다는 사실)가 나온다.
   const cardText = () => a.textContent('#role-card');
   const before = await cardText();
-  const isLiarCard = before.includes('담당자: ');
-  const detailWord = isLiarCard ? '카테고리' : '제시어';
-  check('X18 역할 카드는 처음에 펼쳐져 있다 (상세가 보인다)', before.includes(detailWord), before);
+  check('X18 [요청] 접힌 머리글은 역할과 무관하게 카테고리만 보인다', before.includes('카테고리'), before);
+  check('X18 역할 카드는 처음에 펼쳐져 있다 (제시어 관련 상세가 보인다)', before.includes('제시어'), before);
   await a.click('#role-card');
   const folded = await cardText();
-  check('X18 [요청] 역할 카드를 클릭하면 접힌다 (상세가 사라진다)', !folded.includes(detailWord), folded);
+  check('X18 [요청] 역할 카드를 클릭하면 접힌다 (라이어 여부·제시어가 사라진다)',
+    !folded.includes('제시어') && folded.includes('카테고리'), folded);
   await a.click('#role-card');
   const reopened = await cardText();
-  check('X18 다시 클릭하면 펼쳐진다', reopened.includes(detailWord));
+  check('X18 다시 클릭하면 펼쳐진다', reopened.includes('제시어'));
+
+  // ── 게임 시작/다음 라운드 버튼: 글자 없이 돋보기 아이콘만, 안내는 title로 ──
+  check('X18 [요청] 게임 시작 버튼이 돋보기 아이콘만 있고 글자가 없다',
+    (await a.locator('#start-btn svg').count()) === 1
+    && (await a.innerText('#start-btn')).trim() === '',
+    JSON.stringify(await a.innerText('#start-btn')));
+  check('X18 [요청] 안내 문구는 title에 남아 있다',
+    (await a.getAttribute('#start-btn', 'title')) === '게임 시작');
 
   for (const ctx of ctxs) await ctx.close();
   await own.stop();

@@ -119,17 +119,17 @@ async function speaker(ps) { for (const p of ps) if (await p.page.locator('#comp
   if (OUT) await p1.page.screenshot({ path: `${OUT}/01-start.png` });
 
   const cards = await Promise.all(players.map((p) => p.page.textContent('#role-card')));
-  const liarIdx = cards.findIndex((c) => c.includes('담당자: '));
+  const liarIdx = cards.findIndex((c) => c.includes('담당자입니다'));
   const liar = players[liarIdx];
   const citizens = players.filter((p) => p !== liar);
-  const word = cards.find((c) => !c.includes('담당자: ')).split('제시어: ')[1].trim();
+  const word = cards.find((c) => !c.includes('담당자입니다')).split('제시어: ')[1].trim();
   const category = cards[0].split('카테고리: ')[1].split(/[\n(]/)[0].trim();
 
   log('\n━━━━━━━━━━ 역할이 정해졌습니다 ━━━━━━━━━━');
   log(`  카테고리 : ${category}`);
   log(`  제시어   : ${word}   ← 시민 4명만 압니다`);
   log(`  라이어   : ${liar.name}`);
-  check('라이어는 정확히 한 명', cards.filter((c) => c.includes('담당자: ')).length === 1);
+  check('라이어는 정확히 한 명', cards.filter((c) => c.includes('담당자입니다')).length === 1);
   check('시민 4명이 같은 제시어를 본다', cards.filter((c) => c.includes(`제시어: ${word}`)).length === 4);
   const liarHtml = await liar.page.content();
   check('라이어 화면 어디에도 제시어가 없다', !liarHtml.includes(word), `제시어="${word}"`);

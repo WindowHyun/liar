@@ -90,7 +90,10 @@ li.offline .p-avatar { opacity:.5; }
 #vote-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:30px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; cursor:pointer; padding:0; }
 #vote-btn .em { font-size:16px; line-height:1; }
 #vote-btn:not(:disabled):hover { background:#F0EFF1; }
-#start-btn { height:30px; padding:0 13px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; font-size:13px; cursor:pointer; }
+/* [요청] 게임 시작/다음 라운드 버튼도 돋보기 아이콘만 있는 원형 버튼으로 - 투표 버튼과 같은 모양 */
+#start-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:30px; border:1px solid #D8D8DA; border-radius:14px; background:#fff; cursor:pointer; padding:0; color:#1D1C1D; }
+#start-btn svg { width:16px; height:16px; }
+#start-btn:not(:disabled):hover { background:#F0EFF1; }
 button:disabled { opacity:.45; cursor:default; }
 input:disabled { opacity:.5; }
 
@@ -122,27 +125,28 @@ input:disabled { opacity:.5; }
 .msg .text .liar-hl { color:#791F1F; font-weight:700; }
 .msg .text code { background:#F0EFF1; border:1px solid #E4E4E6; border-radius:3px; padding:1px 4px; font-family:"SFMono-Regular", Consolas, Menlo, monospace; font-size:12.5px; }
 
-/* [요청] 같은 사람이 연달아 말하면 아바타·이름을 다시 그리지 않는다 - 자리만 좁게 남겨
-   두고, 그 자리에 마우스를 올렸을 때만 시각을 보여준다(슬랙과 같은 방식). */
-.msg.grouped { margin-bottom:2px; margin-top:-8px; }
-.msg.grouped .hover-time { display:none; font-size:10px; color:#8A8A8E; line-height:28px; }
-.msg.grouped:hover .hover-time { display:block; }
+/* [요청] 같은 사람이 연달아 말하면 아바타·이름을 다시 그리지 않는다 - 그 자리는 비워 둔다.
+   호버 시 무언가 뜨던 것이 줄바꿈 레이아웃을 깨서, 마우스를 올려도 아무것도 뜨지 않는다.
+   [정렬] 음수 margin-top으로 끌어올리면 앞줄이 여러 줄일 때 겹칠 수 있어, 앞줄의
+   아래 여백을 줄이는 쪽으로 바꿨다 - 내용 길이와 상관없이 항상 안전하다. */
+.msg.grouped { margin-bottom:2px; }
+.msg:has(+ .msg.grouped) { margin-bottom:2px; }
 
 /* 대화가 비어 있을 때의 안내 */
 .chat-empty { font-size:13px; color:#8A8A8E; margin:6px 0 14px; }
 
-/* [요청] 결과를 팝업 대신 대화 속 카드로 남긴다 - 다른 시스템 안내와 같은 자리에,
-   다음 판을 시작한 뒤에도 되짚어 볼 수 있게. 이겼는지 졌는지에 따라 배경색이 다르다. */
-.result-card { margin-top:2px; padding:14px 16px; border-radius:8px; background:#fff; border:1px solid #E4E4E6; font-size:14px; }
-.result-card .headline { font-weight:700; font-size:16px; margin-bottom:6px; }
+/* [요청] 결과를 팝업이나 코드블록처럼 생긴 박스가 아니라 그냥 채팅 글줄로 남긴다 -
+   다른 시스템 안내와 똑같은 모양이다. 이겼는지 졌는지는 헤드라인 색으로만 구분한다. */
+.result-card { margin-top:2px; font-size:14px; }
+.result-card .headline { font-weight:700; font-size:14px; margin-bottom:3px; }
 .result-card .why { font-size:13px; color:#616061; }
-.result-card .facts { display:flex; flex-wrap:wrap; gap:8px; margin-top:11px; }
-.result-card .fact { display:inline-flex; align-items:center; gap:7px; background:rgba(255,255,255,.72); border:1px solid rgba(0,0,0,.07); border-radius:14px; padding:4px 12px; font-size:13px; }
-.result-card .fact .k { color:#616061; font-size:11.5px; }
-.result-card .fact b { font-weight:700; }
-.result-card.win-liar { background:#FCEBEB; border-color:#F0CFCF; color:#791F1F; }
-.result-card.win-citizens { background:#EAF3DE; border-color:#D2E4BC; color:#27500A; }
-.result-card.win-none { background:#EDEDF0; border-color:#DFDFE3; color:#5B5B60; }
+.result-card .facts { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:6px; font-size:13px; color:#616061; }
+.result-card .fact { display:inline-flex; align-items:center; gap:4px; }
+.result-card .fact .k { color:#8A8A8E; }
+.result-card .fact b { font-weight:700; color:#1D1C1D; }
+.result-card.win-liar .headline { color:#791F1F; }
+.result-card.win-citizens .headline { color:#27500A; }
+.result-card.win-none .headline { color:#5B5B60; }
 
 /* 대화 안에 들여쓰여 붙는 진행 블록 (설명 / 자유 / 찬반 / 투표 / 정답) */
 #live-block:empty { display:none; }
@@ -234,7 +238,6 @@ input:disabled { opacity:.5; }
   #topbar { padding:10px 14px; }
   #topbar h2 { font-size:14px; }
   #topbar-actions { gap:6px; }
-  #start-btn { padding:0 10px; font-size:12px; }
 
   #role-card { margin:10px 14px 0; padding:10px 12px; }
   #chat { padding:10px 14px; }

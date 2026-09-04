@@ -386,7 +386,7 @@ function clockOf(at) {
  * 슬랙의 메시지 한 덩어리(아바타 + 이름 + 시각 + 본문). 본문은 호출한 쪽이 채운다.
  *
  * [요청] 같은 사람이 연달아 말하면(opts.grouped) 아바타·이름·시각 줄을 다시 그리지 않는다.
- * 대신 아바타 자리에 마우스를 올렸을 때만 보이는 시각을 남긴다 - 슬랙과 같은 방식이다.
+ * 그 자리는 그냥 비워 둔다.
  */
 function messageShell(opts) {
   var wrap = document.createElement('div');
@@ -394,12 +394,7 @@ function messageShell(opts) {
 
   var slot = document.createElement('div');
   slot.className = 'avatar-slot';
-  if (opts.grouped) {
-    var hoverTime = document.createElement('span');
-    hoverTime.className = 'hover-time';
-    hoverTime.textContent = opts.at ? clockOf(opts.at) : '';
-    slot.appendChild(hoverTime);
-  } else {
+  if (!opts.grouped) {
     var avatar = document.createElement('div');
     avatar.className = opts.system ? 'avatar sys' : 'avatar';
     avatar.textContent = opts.system ? '⚙️' : (opts.name || '?').slice(0, 2);
@@ -451,6 +446,38 @@ var FORMATS = [
   { delim: '`', tag: 'code' },
 ];
 
+// [요청] 글자 색. `:이름[글자]`는 미리 정해 둔 색 중에서, `:#RGB[글자]`/`:#RRGGBB[글자]`는
+// 원하는 색을 직접 16진수로 준다. element.style.color에 넘기므로, 이름은 아래 표에 있는
+// 값만 실제로 적용되고 16진수는 정규식으로 형식을 검증한 것만 통과한다 - 둘 다 임의의
+// CSS/스크립트가 새어 들어갈 여지가 없다.
+var COLOR_NAMES = {
+  red: '#C93A3A', orange: '#E07B53', yellow: '#946200', green: '#27500A',
+  blue: '#1264A3', purple: '#8C5AC7', pink: '#C93A7A', gray: '#616061',
+};
+var COLOR_NAME_LIST = Object.keys(COLOR_NAMES).sort(function (a, b) { return b.length - a.length; });
+var HEX_COLOR_RE = /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?/;
+
+/** i 위치가 ":이름[" 또는 ":#RGB["로 시작하면 색과 안쪽 글자 범위를, 아니면 null을 준다. */
+function matchColorSpan(text, i) {
+  if (text[i] !== ':') return null;
+  var rest = text.slice(i + 1);
+  var color = null;
+  var markerLen = 0;
+  for (var n = 0; n < COLOR_NAME_LIST.length; n += 1) {
+    var name = COLOR_NAME_LIST[n];
+    if (rest.slice(0, name.length) === name) { color = COLOR_NAMES[name]; markerLen = name.length; break; }
+  }
+  if (!color) {
+    var hexMatch = HEX_COLOR_RE.exec(rest);
+    if (hexMatch) { color = hexMatch[0]; markerLen = hexMatch[0].length; }
+  }
+  if (!color || rest[markerLen] !== '[') return null;
+  var openAt = i + 2 + markerLen; // ':' + 색 표시 다음이 '[', 그 다음이 내용 시작
+  var closeAt = text.indexOf(']', openAt);
+  if (closeAt === -1 || closeAt === openAt) return null; // 닫는 대괄호가 없거나 안이 비어 있으면 그냥 글자
+  return { color: color, contentStart: openAt, contentEnd: closeAt, end: closeAt + 1 };
+}
+
 /**
  * [요청] 대화 속 "@닉네임"과 굵게·코드·취소선 서식을 함께 눈에 띄게 그린다.
  *
@@ -488,6 +515,17 @@ function appendFormatted(box, text, names) {
       chip.textContent = '@' + hit;
       box.appendChild(chip);
       i += 1 + hit.length;
+      continue;
+    }
+
+    var colorSpan = matchColorSpan(text, i);
+    if (colorSpan) {
+      flush();
+      var span = document.createElement('span');
+      span.style.color = colorSpan.color;
+      appendFormatted(span, text.slice(colorSpan.contentStart, colorSpan.contentEnd), names); // 색 안의 굵게·멘션은 계속 인식한다
+      box.appendChild(span);
+      i = colorSpan.end;
       continue;
     }
 
@@ -1064,11 +1102,15 @@ function renderRoleCard(s) {
   }
   if (card.classList.contains('hidden')) roleCardOpen = true; // 새로 나타날 때는 펼친 채로 시작한다
   card.classList.remove('hidden');
+  // [요청] 맨 위(접힌 상태)에는 카테고리만 보인다 - 역할에 따라 다른 글자가 아니라서,
+  // 옆에서 흘끗 봐서는 라이어인지조차 알 수 없다. 클릭해서 펼쳐야 라이어 여부와
+  // 제시어(또는 모른다는 사실)가 나온다.
   if (s.you.isLiar) {
-    buildRoleCard(card, 'liar', LABELS.liar + ': ' + s.you.nickname + '님',
-      '카테고리: ' + s.you.category + ' (제시어는 모릅니다)');
+    buildRoleCard(card, 'liar', '카테고리: ' + s.you.category,
+      LABELS.liar + '입니다 · 제시어는 모릅니다');
   } else if (s.you.word) {
-    buildRoleCard(card, 'citizen', '카테고리: ' + s.you.category, '제시어: ' + s.you.word);
+    buildRoleCard(card, 'citizen', '카테고리: ' + s.you.category,
+      LABELS.liar + josa(LABELS.liar, '이 아닙니다', '가 아닙니다') + ' · 제시어: ' + s.you.word);
   } else {
     card.className = 'pending';
     card.onclick = null;
@@ -1212,8 +1254,10 @@ function render(s) {
   notifyIfWorthIt(s);
 
   var lobbyish = s.phase === 'lobby' || s.phase === 'result';
+  // [요청] 돋보기 아이콘만 있는 버튼이라 글자는 title(말풍선 안내)로만 남긴다.
   $('start-btn').disabled = !s.canStart;
-  $('start-btn').textContent = s.phase === 'result' ? '다음 라운드' : '게임 시작';
+  $('start-btn').title = s.phase === 'result' ? '다음 라운드' : '게임 시작';
+  $('start-btn').setAttribute('aria-label', s.phase === 'result' ? '다음 라운드' : '게임 시작');
   $('start-btn').classList.toggle('hidden', !lobbyish);
   // 투표 제안은 자유 대화 때만. 설명이 끝나기 전에는 누를 수 없다.
   $('vote-btn').disabled = !(s.phase === 'free' && s.you && s.you.inRound);
