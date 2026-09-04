@@ -850,6 +850,20 @@ async function slackLookCheck(browser) {
   await b.waitForFunction(() => document.querySelector('#chat').textContent.includes('두 줄'), null, { timeout: 5000 });
   check('X18 Enter를 누르면 그제서야 전송되고 입력창이 비워진다', (await a.inputValue('#chat-input')) === '');
 
+  // ── 입력창 도구줄: 굵게·취소선·코드 버튼은 실제로 기호를 넣고, @ 버튼은 "@"를 넣는다 ──
+  await a.fill('#chat-input', '골라야할 글자');
+  await a.evaluate(() => { const el = document.getElementById('chat-input'); el.focus(); el.setSelectionRange(0, 4); });
+  await a.click('#composer-toolbar .fmt-btn[data-wrap="**"]');
+  check('X18 [요청] 도구줄 굵게 버튼이 고른 글자를 **로 감싼다',
+    (await a.inputValue('#chat-input')) === '**골라야할** 글자', await a.inputValue('#chat-input'));
+
+  await a.fill('#chat-input', '');
+  await a.click('#mention-btn');
+  check('X18 [요청] @ 버튼이 커서 자리에 "@"를 넣는다', (await a.inputValue('#chat-input')) === '@');
+
+  check('X18 아직 지원하지 않는 서식(기울임·밑줄 등)은 눌러도 아무 일 없다 (비활성)',
+    await a.isDisabled('#composer-toolbar .fmt-btn:has-text("I")'));
+
   // ── 라운드를 시작해서 역할 카드와 System→Slack bot 안내를 함께 본다 ──
   await a.click('#start-btn');
   await a.waitForSelector('#role-card:not(.hidden)', { timeout: 5000 });
@@ -873,6 +887,21 @@ async function slackLookCheck(browser) {
   const before = await cardText();
   check('X18 [요청] 접힌 머리글은 역할과 무관하게 카테고리만 보인다', before.includes('카테고리'), before);
   check('X18 역할 카드는 처음에 펼쳐져 있다 (제시어 관련 상세가 보인다)', before.includes('제시어'), before);
+
+  // [정렬] 화살표 때문에 밀려 있는 머리글 글자와, 상세 글자의 시작 위치가 같아야 한다.
+  // .role-detail의 글자는 padding-left만큼 안쪽에서 시작하므로, 상자 왼쪽 끝이 아니라
+  // 그 padding까지 더한 실제 글자 시작 위치를 봐야 머리글과 같은 기준으로 비교된다.
+  const alignX = await a.evaluate(() => {
+    const detail = document.querySelector('#role-card .role-detail');
+    const detailBox = detail.getBoundingClientRect();
+    const detailTextX = detailBox.x + parseFloat(getComputedStyle(detail).paddingLeft);
+    return {
+      headTextX: document.querySelector('#role-card .role-head .role-line').getBoundingClientRect().x,
+      detailTextX,
+    };
+  });
+  check('X18 [정렬] 역할 카드 머리글과 상세 글자의 왼쪽 줄이 맞는다',
+    alignX.headTextX === alignX.detailTextX, JSON.stringify(alignX));
   await a.click('#role-card');
   const folded = await cardText();
   check('X18 [요청] 역할 카드를 클릭하면 접힌다 (라이어 여부·제시어가 사라진다)',

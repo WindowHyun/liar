@@ -317,6 +317,34 @@ $('chat-input').addEventListener('keydown', function (ev) {
 });
 $('chat-input').addEventListener('input', autoGrowComposer);
 
+// [요청] 도구줄의 굵게·취소선·코드 버튼 - 이미 지원하는 서식만 실제로 눌러서 넣는다.
+// 고른 글자가 있으면 그 글자를 감싸고, 없으면 커서 자리에 기호 쌍만 넣고 그 사이에 커서를 둔다.
+function wrapChatInputSelection(marker) {
+  var el = $('chat-input');
+  var start = el.selectionStart;
+  var end = el.selectionEnd;
+  var value = el.value;
+  var selected = value.slice(start, end);
+  el.value = value.slice(0, start) + marker + selected + marker + value.slice(end);
+  el.focus();
+  el.setSelectionRange(start + marker.length, start + marker.length + selected.length);
+  autoGrowComposer();
+}
+Array.prototype.forEach.call(document.querySelectorAll('#composer-toolbar .fmt-btn[data-wrap]'), function (btn) {
+  btn.onclick = function () { wrapChatInputSelection(btn.getAttribute('data-wrap')); };
+});
+// [요청] @ 버튼 - 커서 자리에 "@"만 넣어 준다. 실제로 누구를 부른 것인지는 서버가
+// 텍스트에서 다시 찾아내므로(@닉네임), 여기서는 그 글자를 타이핑해 주는 역할만 한다.
+$('mention-btn').onclick = function () {
+  var el = $('chat-input');
+  var start = el.selectionStart;
+  var end = el.selectionEnd;
+  el.value = el.value.slice(0, start) + '@' + el.value.slice(end);
+  el.focus();
+  el.setSelectionRange(start + 1, start + 1);
+  autoGrowComposer();
+};
+
 // 진행 블록(찬반/투표/정답)은 매번 새로 그리므로 위임으로 받는다.
 $('live-block').addEventListener('click', function (ev) {
   var chip = ev.target.closest('button[data-agree]');

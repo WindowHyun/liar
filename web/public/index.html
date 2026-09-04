@@ -82,10 +82,35 @@
 
       <div id="composer">
         <div id="composer-box">
+          <!-- [요청] 슬랙 실제 입력창처럼 위에 서식 도구줄을 둔다. 이미 지원하는 서식
+               (굵게·취소선·코드)만 실제로 눌러서 넣을 수 있고, 나머지는 자리만 있다. -->
+          <div id="composer-toolbar">
+            <button type="button" class="fmt-btn" data-wrap="**" title="굵게"><b>B</b></button>
+            <button type="button" class="fmt-btn" title="기울임" disabled><i>I</i></button>
+            <button type="button" class="fmt-btn" title="밑줄" disabled><u>U</u></button>
+            <button type="button" class="fmt-btn" data-wrap="~~" title="취소선"><s>S</s></button>
+            <span class="toolbar-sep"></span>
+            <button type="button" class="fmt-btn" title="링크" disabled>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5a3 3 0 0 0 4.24 0l2-2a3 3 0 0 0-4.24-4.24l-1 1M9.5 6.5a3 3 0 0 0-4.24 0l-2 2a3 3 0 0 0 4.24 4.24l1-1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+            </button>
+            <button type="button" class="fmt-btn" title="번호 목록" disabled>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h8M6 8h8M6 12h8M2 4h.01M2 8h.01M2 12h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </button>
+            <button type="button" class="fmt-btn" data-wrap="`" title="코드">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4 1.5 8 5 12M11 4l3.5 4-3.5 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
           <textarea id="chat-input" placeholder="댓글 남기기..." maxlength="300" rows="1"></textarea>
-          <button id="send-btn" title="전송" aria-label="전송">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 18.5 19 10 1.5 1.5 1.5 8.2l12.4 1.8-12.4 1.8z"/></svg>
-          </button>
+          <div id="composer-actions">
+            <button type="button" class="fmt-btn" title="파일 첨부" disabled>+</button>
+            <button type="button" class="fmt-btn" title="글자 크기" disabled>Aa</button>
+            <button type="button" class="fmt-btn" title="이모지" disabled>🙂</button>
+            <button type="button" class="fmt-btn" id="mention-btn" title="멘션">@</button>
+            <span class="composer-actions-fill"></span>
+            <button id="send-btn" title="전송" aria-label="전송">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 18.5 19 10 1.5 1.5 1.5 8.2l12.4 1.8-12.4 1.8z"/></svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
