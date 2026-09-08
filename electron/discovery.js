@@ -29,7 +29,7 @@ const { log, warn, error } = require('../logger');
  * 아예 참가자로 세지 않고, 사용자에게 "버전이 다르다"고 알린다.
  * 형식을 바꿀 때 반드시 올릴 것.
  */
-const DISCOVERY_VERSION = 1;
+const DISCOVERY_VERSION = 2;
 
 const ANNOUNCE_MS = 2000;      // 알림 주기
 const PEER_TIMEOUT_MS = 7000;  // 알림 3~4번을 연속으로 놓치면 나간 것으로 본다

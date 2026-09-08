@@ -4,6 +4,8 @@
 
 **➡️ [사용법 (exe / 웹 / 모바일)](docs/usage.md)** — 처음이라면 여기부터.
 
+**v0.10.0:** [관전 모드·다수결 강퇴 사용법](docs/spectator-moderation.md). 게임 참가 2~8명과 관전 최대 16명을 지원합니다. 강퇴는 대상 제외 참가자 과반수(최소 2명) 찬성이 필요합니다.
+
 [Releases](https://github.com/WindowHyun/liar/releases)에서 exe를 받아 각자 실행하면
 주소 입력 없이 자동으로 모인다. 아래는 개발자용 설명이다.
 
@@ -69,9 +71,8 @@ logger.js          파일 로그 (회전 5MB, PID, 레벨)
 npm test
 ```
 
-86건. 규칙 53건(가상 시계로 30초 대기 없이), 화면 17건(실제 Chromium 3개로 한 판),
-자동 발견 9건(실제 프로세스 4개), Electron 브리지 7건.
-화면 테스트는 Playwright가 없으면 건너뛴다.
+규칙·관전·강퇴·재접속·자동 발견·호스트 인계와 실제 Chromium 화면 흐름을 검사합니다.
+실행 전에 `npm ci`와 `npx playwright install chromium`으로 테스트 의존성을 준비하세요.
 
 ## 배포용 exe
 

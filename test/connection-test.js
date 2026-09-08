@@ -111,14 +111,14 @@ async function main() {
   d.send(JSON.stringify({ type: 'join', nickname: '지현' }));
   const first = await expect(d, (m) => m.type === 'welcome');
   d.send(JSON.stringify({ type: 'join', nickname: '지현2' }));
-  const second = await expect(d, (m) => m.type === 'welcome');
+  const second = await expect(d, (m) => m.type === 'error');
   await wait(300);
-  check('C5 두 번째 참가는 새 자리로 들어간다', first.playerId !== second.playerId);
+  check('C5 중복 참가는 기존 자리를 유지하고 거절한다', second.message.includes('이미 참가'));
 
   const connectedNow = lastState ? lastState.players.filter((p) => p.connected) : [];
-  // 붙어 있는 사람: 철수(a), 민수(c), 지현2(d)  → 지현(첫 자리)은 접속 중이면 안 된다
-  check('C5 앞 자리가 접속 중인 채로 남지 않는다',
-    connectedNow.length === 3 && !connectedNow.some((p) => p.id === first.playerId),
+  // 철수(a), 민수(c), 지현(d): 중복 요청으로 유령 자리나 새 참가자를 만들지 않는다.
+  check('C5 기존 자리 하나만 연결된 상태로 유지된다',
+    connectedNow.length === 3 && connectedNow.some((p) => p.id === first.playerId),
     connectedNow.map((p) => p.nickname).join(',') || '(상태 못 받음)');
 
   try { a.close(); } catch { /* 무시 */ }

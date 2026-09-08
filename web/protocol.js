@@ -16,7 +16,10 @@ function str(v, max) { return typeof v === 'string' && v.trim().length > 0 && v.
 function optStr(v, max) { return v === undefined || v === null || (typeof v === 'string' && v.length <= max); }
 
 const CLIENT_MESSAGES = {
-  join: (m) => (str(m.nickname, LIMITS.nickname) && optStr(m.token, LIMITS.token) ? null : 'nickname/token'),
+  join: (m) => (str(m.nickname, LIMITS.nickname) && optStr(m.token, LIMITS.token) && (m.spectator === undefined || typeof m.spectator === 'boolean') ? null : 'nickname/token'),
+  mode: (m) => (typeof m.spectator === 'boolean' ? null : 'spectator'),
+  kick: (m) => (str(m.targetId, LIMITS.id) ? null : 'targetId'),
+  kickVote: (m) => (str(m.proposalId, LIMITS.id) && typeof m.agree === 'boolean' ? null : 'proposalId/agree'),
   start: () => null,
   leave: () => null,
   ping: () => null,   // [E-3] 화면이 연결이 살아 있는지 확인하는 용도
@@ -31,7 +34,7 @@ const CLIENT_MESSAGES = {
 function validateClientMessage(msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return '메시지가 객체가 아님';
   if (typeof msg.type !== 'string') return 'type 없음';
-  const check = CLIENT_MESSAGES[msg.type];
+  const check = Object.hasOwn(CLIENT_MESSAGES, msg.type) ? CLIENT_MESSAGES[msg.type] : null;
   if (!check) return `알 수 없는 type: ${String(msg.type).slice(0, 32)}`;
   const bad = check(msg);
   return bad ? `${msg.type}의 ${bad} 필드가 형식에 맞지 않음` : null;

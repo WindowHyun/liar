@@ -22,6 +22,12 @@ var LABELS = {
 
 var TOKEN_KEY = 'liar-game-token';
 var NAME_KEY = 'liar-game-nickname';
+var MODE_KEY = 'liar-game-spectator';
+var spectatorMode = readStored(MODE_KEY) === 'true';
+var kicked = false;
+var moderationSignature = '';
+var sessionToken = null;
+try { sessionToken = window.sessionStorage.getItem(TOKEN_KEY); } catch (e) { /* memory fallback */ }
 
 var ws = null;
 var state = null;
@@ -77,15 +83,25 @@ function josa(word, withBatchim, without) {
 }
 
 function readStored(key) {
+  try { var value = window.sessionStorage.getItem(key); if (value !== null) return value; } catch (e) { /* local fallback */ }
   try { return window.localStorage.getItem(key) || null; } catch (e) { return null; }
 }
 function writeStored(key, value) {
+  try { window.sessionStorage.setItem(key, value); } catch (e) { /* local fallback */ }
   try { window.localStorage.setItem(key, value); } catch (e) { /* 사생활 보호 모드 등 */ }
 }
 function clearStored(key) {
+  try { window.sessionStorage.removeItem(key); } catch (e) { /* local fallback */ }
   try { window.localStorage.removeItem(key); } catch (e) { /* 사생활 보호 모드 등 */ }
 }
-function readToken() { return readStored(TOKEN_KEY); }
+function readToken() { return sessionToken; }
+function saveToken(token) {
+  sessionToken = token;
+  try {
+    if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
+    else window.sessionStorage.removeItem(TOKEN_KEY);
+  } catch (e) { /* memory fallback */ }
+}
 
 // 위장 문구를 마크업에 끼워 넣는다.
 Array.prototype.forEach.call(document.querySelectorAll('[data-label]'), function (el) {
@@ -147,6 +163,7 @@ function resolveServerUrl() {
 }
 
 function connect() {
+  if (kicked) return;
   var url = resolveServerUrl();
   if (!url) {
     $('conn-hint').textContent = '같은 네트워크의 참가자를 찾는 중...';
@@ -162,7 +179,7 @@ function connect() {
     hideBanner();
     $('conn-hint').textContent = '';
     startWatchdog();
-    if (joined && myNickname) sendMessage({ type: 'join', nickname: myNickname, token: readToken() });
+    if (joined && myNickname) sendMessage({ type: 'join', nickname: myNickname, token: readToken(), spectator: spectatorMode });
   };
 
   ws.onmessage = function (ev) {
@@ -172,11 +189,33 @@ function connect() {
     if (msg.type === 'pong') { pongSeen = true; return; }
     if (msg.type === 'welcome') {
       myId = msg.playerId;
-      writeStored(TOKEN_KEY, msg.token);
+      saveToken(msg.token);
       writeStored(NAME_KEY, myNickname);
       return;
     }
+    if (msg.type === 'kicked') {
+      kicked = true;
+      joined = false;
+      stopWatchdog();
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      state = null;
+      $('role-card').classList.add('hidden');
+      $('live-block').innerHTML = '';
+      $('moderation-panel').classList.add('hidden');
+      Array.prototype.forEach.call(document.querySelectorAll('#screen-game button, #chat-input'), function (el) { el.disabled = true; });
+      $('join-error').textContent = msg.message;
+      showBanner('warn', msg.message + ' 10분 후 새로고침해 주세요.');
+      return;
+    }
     if (msg.type === 'error') {
+      if (!myId) {
+        joined = false;
+        $('screen-game').classList.add('hidden');
+        $('screen-join').classList.remove('hidden');
+        $('join-error').textContent = msg.message;
+        return;
+      }
       // 방금 보낸 확인 요청이 거절당한 것이라면, 이 서버는 예전 버전이다.
       // 사용자에게는 아무 의미 없는 오류라 띄우지 않고, 확인 요청만 그만 보낸다.
       if (!pongSeen && pingSentAt && Date.now() - pingSentAt < 3000) {
@@ -196,6 +235,7 @@ function connect() {
 
   ws.onclose = function () {
     stopWatchdog();
+    if (kicked) return;
     $('conn-hint').textContent = '서버와 연결이 끊어졌습니다.';
     showBanner('warn', '서버와의 연결이 끊어졌습니다. 다시 연결하는 중입니다...');
     scheduleReconnect();
@@ -236,6 +276,7 @@ function stopWatchdog() {
 }
 
 function scheduleReconnect() {
+  if (kicked) return;
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(function () { reconnectTimer = null; connect(); }, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 5000);
@@ -260,9 +301,12 @@ $('join-btn').onclick = function () {
   var nickname = $('nickname-input').value.trim();
   if (!nickname) return;
   myNickname = nickname;
+  spectatorMode = $('spectator-input').checked;
+  writeStored(MODE_KEY, String(spectatorMode));
+  $('join-error').textContent = '';
   joined = true;
   enterGameScreen();
-  sendMessage({ type: 'join', nickname: nickname, token: readToken() });
+  sendMessage({ type: 'join', nickname: nickname, token: readToken(), spectator: spectatorMode });
 };
 
 /**
@@ -271,8 +315,9 @@ $('join-btn').onclick = function () {
  * 소켓은 그대로 둔다 - 서버가 playerId만 떼어 내므로 같은 연결로 새로 참가할 수 있다.
  */
 function leaveRoom() {
+  if (kicked) return;
   sendMessage({ type: 'leave' });
-  clearStored(TOKEN_KEY);
+  saveToken(null);
   clearStored(NAME_KEY);
   joined = false;
   myId = null;
@@ -295,6 +340,19 @@ function leaveRoom() {
 }
 
 $('leave-btn').onclick = leaveRoom;
+$('mode-btn').onclick = function () {
+  if (state && state.you) sendMessage({ type: 'mode', spectator: !state.you.spectator });
+};
+$('participant-list').addEventListener('click', function (ev) {
+  var button = ev.target.closest('button[data-kick]');
+  if (button) sendMessage({ type: 'kick', targetId: button.getAttribute('data-kick') });
+});
+$('moderation-panel').addEventListener('click', function (ev) {
+  var button = ev.target.closest('button[data-kick-vote]');
+  if (button && state && state.moderation && state.moderation.proposal) {
+    sendMessage({ type: 'kickVote', proposalId: state.moderation.proposal.id, agree: button.getAttribute('data-kick-vote') === 'yes' });
+  }
+});
 $('start-btn').onclick = function () { sendMessage({ type: 'start' }); };
 $('vote-btn').onclick = function () { sendMessage({ type: 'callVote' }); };
 $('send-btn').onclick = function () {
@@ -1065,7 +1123,7 @@ function renderParticipants(s) {
   s.players.forEach(function (p) {
     var li = document.createElement('li');
     if (!p.connected) li.className = 'offline';
-    else if (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound) li.className = 'spectator';
+    else if (p.spectator || (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound)) li.className = 'spectator';
 
     // [요청] 이름 앞에 사람마다 다른 색의 아바타 + 우하단에 접속 상태 배지.
     // 실제로 구분할 수 있는 상태는 연결됨/끊김 두 가지뿐이다(자리비움 같은 중간 상태는 없다).
@@ -1089,6 +1147,7 @@ function renderParticipants(s) {
     var tagText = null;
     var tagClass = 'tag';
     if (!p.connected) tagText = '끊김';
+    else if (p.spectator) tagText = '관전';
     else if (s.phase === 'turn' && p.inRound) {
       if (p.speaking) { tagText = '설명 중'; tagClass += ' speaking'; }
       else if (p.spoke) { tagText = '완료'; tagClass += ' voted'; }
@@ -1104,11 +1163,49 @@ function renderParticipants(s) {
       tag.textContent = tagText;
       li.appendChild(tag);
     }
+    if (s.you && s.you.canKick && p.connected && p.id !== myId) {
+      var kick = document.createElement('button');
+      kick.className = 'kick-button';
+      kick.textContent = '강퇴 제안';
+      kick.setAttribute('data-kick', p.id);
+      kick.setAttribute('aria-label', p.nickname + ' 강퇴 제안');
+      kick.disabled = !!(s.moderation && s.moderation.proposal);
+      li.appendChild(kick);
+    }
     list.appendChild(li);
   });
 }
 
 /** 전적은 사이드바 맨 아래에 버전 표기처럼 둔다. */
+function renderModeration(s) {
+  var panel = $('moderation-panel');
+  var data = s.moderation;
+  var signature = JSON.stringify(data || null);
+  if (signature === moderationSignature) return;
+  moderationSignature = signature;
+  panel.innerHTML = '';
+  panel.classList.toggle('hidden', !data || (!data.proposal && !data.result));
+  if (!data) return;
+  var text = document.createElement('p');
+  if (!data.proposal) {
+    if (data.result) { text.textContent = data.result.message; panel.appendChild(text); }
+    return;
+  }
+  var vote = data.proposal;
+  text.textContent = vote.targetName + '님을 강퇴할까요? 찬성 ' + vote.agree + ' / 필요 ' + vote.required
+    + '명 (대상 제외 참가자 ' + vote.total + '명 기준, 30초 제한)';
+  panel.appendChild(text);
+  if (vote.canVote) {
+    ['yes', 'no'].forEach(function (answer) {
+      var button = document.createElement('button');
+      button.textContent = answer === 'yes' ? '강퇴 찬성' : '강퇴 반대';
+      button.setAttribute('data-kick-vote', answer);
+      button.setAttribute('aria-pressed', String(vote.answer === (answer === 'yes')));
+      panel.appendChild(button);
+    });
+  }
+}
+
 function renderTally(s) {
   var el = $('tally-label');
   if (!s.record || s.record.rounds === 0) { el.textContent = ''; return; }
@@ -1257,6 +1354,14 @@ function notifyIfWorthIt(s) {
 }
 
 function render(s) {
+  if (kicked) return;
+  if (s.you) {
+    spectatorMode = !!s.you.spectator;
+    writeStored(MODE_KEY, String(spectatorMode));
+    $('mode-btn').textContent = spectatorMode ? '게임 참가로 전환' : '관전으로 전환';
+    $('mode-btn').disabled = !s.you.canChangeMode;
+  }
+  renderModeration(s);
   state = s;
   if (s.you) myId = s.you.id;
 
@@ -1294,7 +1399,7 @@ function render(s) {
   // [이슈] 관전자로 들어왔다가 다음 판에서 참가자가 되어도 이 배너가 그대로 남아 있었다.
   // 띄우기만 하고 내리는 쪽이 없었다. 본인 차례인데도 "관전합니다"가 떠 있었다.
   if (s.phase !== 'lobby' && s.phase !== 'result' && s.you && !s.you.inRound) {
-    showBanner('ok', '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.', 0, 'spectating');
+    showBanner('ok', s.you.spectator ? '관전 중입니다. 게임 참가로 전환하면 다음 라운드부터 참여합니다.' : '이미 시작된 판이라 이번 라운드는 관전합니다. 다음 라운드부터 참여합니다.', 0, 'spectating');
   } else {
     hideBannerIf('spectating');
   }
@@ -1346,7 +1451,9 @@ if (window.liar && typeof window.liar.onServerChange === 'function') {
 }
 
 // 새로고침해도 접속 화면으로 되돌아가지 않게, 닉네임과 토큰을 저장해 두고 다시 참가한다.
+$('spectator-input').checked = spectatorMode;
 var savedName = readStored(NAME_KEY);
+if (savedName) $('nickname-input').value = savedName;
 if (savedName && readToken()) {
   myNickname = savedName;
   joined = true;

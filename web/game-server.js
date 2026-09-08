@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createRoom } = require('./room');
+const { isAllowedOrigin } = require('./origin');
 const { validateClientMessage } = require('./protocol');
 const { log, warn, error } = require('../logger');
 
@@ -138,7 +139,7 @@ function createGameServer(options) {
 
   function handleMessage(client, ws, raw) {
     // 서버를 내리는 중이면 방이 이미 없다(호스트를 넘길 때 이 경로를 지난다).
-    if (!room) return;
+    if (!room || client.kicked) return;
 
     // [S-2] 창 하나가 서버를 독차지하지 못하게 한다.
     const now = Date.now();
@@ -173,12 +174,16 @@ function createGameServer(options) {
       // 한 연결이 참가를 두 번 보내면 앞서 잡았던 자리가 주인 없이 남는다. 연결이
       // 끊길 때 정리되는 건 마지막 자리 하나뿐이라, 앞 자리는 "접속 중"인 채로
       // 영영 목록에 남아 인원수와 시작 조건까지 어긋나게 만든다.
-      if (client.playerId) room.disconnect(client.playerId);
-      const joined = room.join({ nickname: msg.nickname, token: msg.token });
+      if (client.playerId) {
+        sendTo(ws, { type: 'error', message: '이미 참가한 연결입니다.' });
+        return;
+      }
+      const joined = room.join({ nickname: msg.nickname, token: msg.token, spectator: msg.spectator });
       // 정원이 찬 경우. 자리를 잡지 못했으므로 playerId를 붙이지 않는다.
       if (joined.error) {
         warn(`[참가 거절] ${joined.error}`);
-        sendTo(ws, { type: 'error', message: joined.error });
+        sendTo(ws, { type: joined.kicked ? 'kicked' : 'error', message: joined.error });
+        if (joined.kicked) { client.kicked = true; ws.close(4003, 'kicked'); }
         return;
       }
       client.playerId = joined.playerId;
@@ -205,7 +210,10 @@ function createGameServer(options) {
     }
 
     let reason = null;
-    if (msg.type === 'start') reason = room.start();
+    if (msg.type === 'mode') reason = room.setMode(client.playerId, msg.spectator);
+    else if (msg.type === 'kick') reason = room.requestKick(client.playerId, msg.targetId);
+    else if (msg.type === 'kickVote') reason = room.voteKick(client.playerId, msg.proposalId, msg.agree);
+    else if (msg.type === 'start') reason = room.start(client.playerId);
     else if (msg.type === 'chat') reason = room.say(client.playerId, msg.text);
     else if (msg.type === 'callVote') reason = room.callVote(client.playerId);
     else if (msg.type === 'proposalVote') reason = room.respondProposal(client.playerId, msg.agree);
@@ -223,13 +231,9 @@ function createGameServer(options) {
    *   - Node 클라이언트(테스트 등)는 Origin을 안 보내므로 통과시킨다
    */
   function allowOrigin(info) {
-    const origin = info.origin;
-    if (!origin) return true; // 브라우저가 아닌 클라이언트
-    if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) return true;
-    // 같은 LAN에서 이 서버 주소로 직접 들어온 경우
-    if (/^https?:\/\/\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(origin)) return true;
-    warn(`[접속 거절] 허용되지 않은 출처: ${origin}`);
-    return false;
+    const allowed = isAllowedOrigin(info, opts.allowedOrigins || []);
+    if (!allowed) warn('[접속 거절] 허용되지 않은 출처');
+    return allowed;
   }
 
   function start() {
@@ -243,7 +247,17 @@ function createGameServer(options) {
           error(`[진행 처리 실패] ${err && err.stack ? err.stack : err}`);
         }
       }, ms);
-      room = createRoom({ onChange: broadcastState, setTimer: guardedTimer });
+      room = createRoom({ onChange: broadcastState, setTimer: guardedTimer,
+        onKick: (id) => {
+          for (const client of clients) {
+            if (client.playerId !== id) continue;
+            client.playerId = null;
+            client.kicked = true;
+            sendTo(client.ws, { type: 'kicked', message: '다수결로 강퇴되었습니다. 10분 동안 재입장할 수 없습니다.' });
+            client.ws.close(4003, 'kicked');
+          }
+        },
+      });
       startHeartbeat();
       server = http.createServer(handleHttp);
       // [S-1] 이 서버는 자기가 내려준 화면(같은 출처)이나 Electron 창(로컬 출처)만
@@ -276,6 +290,7 @@ function createGameServer(options) {
   }
 
   function cleanup() {
+    if (room) room.dispose();
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     for (const client of clients) {
       try { client.ws.terminate(); } catch { /* 이미 끊김 */ }

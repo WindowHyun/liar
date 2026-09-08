@@ -30,8 +30,10 @@
     <h1 data-label="app">Slack</h1>
     <p>닉네임을 입력하고 접속하세요.</p>
     <input id="nickname-input" placeholder="닉네임" maxlength="24" autocomplete="off" />
+    <label class="spectator-choice"><input id="spectator-input" type="checkbox" /> 관전으로 입장</label>
     <button id="join-btn">접속</button>
-    <p class="hint">같은 주소로 접속한 사람끼리 함께 플레이합니다. 최소 2명, 최대 8명입니다.</p>
+    <p id="join-error" role="status"></p>
+    <p class="hint">같은 주소로 접속한 사람끼리 함께 플레이합니다. 게임 참가 2~8명, 관전 최대 16명입니다.</p>
   </div>
 
   <div id="screen-game" class="hidden">
@@ -41,6 +43,7 @@
       <p class="label">다이렉트 메시지</p>
       <ul id="participant-list"></ul>
       <div id="sidebar-foot">
+        <button id="mode-btn">관전으로 전환</button>
         <button id="leave-btn" title="방에서 나갑니다">방 나가기</button>
         <p id="tally-label"></p>
         <p id="conn-hint"></p>
@@ -67,6 +70,7 @@
         </div>
       </div>
 
+      <div id="moderation-panel" class="hidden" aria-live="polite"></div>
       <div id="role-card" class="hidden"></div>
 
       <div id="chat">

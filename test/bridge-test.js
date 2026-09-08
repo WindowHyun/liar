@@ -88,7 +88,8 @@ async function main() {
     (await page.textContent('#participant-list')).includes('철수') && serverA.playerCount() === 1);
 
   // 3. 호스트 인계 - 먼저 켠 사람이 나가고 다른 PC가 이어받은 상황
-  serverB = createGameServer({ port: PORT_B });
+  // 이 테스트의 가짜 Electron UI는 실제 55510~55520 대신 PORT_A에서 제공된다.
+  serverB = createGameServer({ port: PORT_B, allowedOrigins: [`http://127.0.0.1:${PORT_A}`] });
   await serverB.start();
   await serverA.stop();
   serverA = null;
@@ -240,7 +241,7 @@ async function roundInProgressHandover() {
     (await pages[0].page.textContent('#live-block')).includes('설명'));
 
   // 호스트가 갑자기 나가고 다른 PC가 이어받는다
-  const hostD = createGameServer({ port: PORT_D });
+  const hostD = createGameServer({ port: PORT_D, allowedOrigins: [`http://127.0.0.1:${PORT_C}`] });
   await hostD.start();
   await hostC.stop();
   hostC = null;
