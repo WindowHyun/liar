@@ -26,6 +26,7 @@
 const crypto = require('crypto');
 const { normalizeWord } = require('./protocol');
 const WORD_LIST = require('./words');
+const { createModeration } = require('./moderation');
 
 /**
  * [H4] 제시어 목록 형식 검사.
@@ -58,6 +59,7 @@ validateWordList(WORD_LIST);
 const MIN_PLAYERS = 2;
 // 한 방에 들어올 수 있는 최대 인원. 넘으면 새로 들어오려는 사람을 막는다(재접속은 막지 않는다).
 const MAX_PLAYERS = 8;
+const MAX_SPECTATORS = 16;
 const TURN_ROUNDS = 2;          // 설명을 몇 바퀴 도는가. 1차는 첫인상, 2차는 서로를 듣고 나서.
 const SPEAK_MS = 60000;         // 한 사람의 설명 차례 제한 시간
 const FREE_MS = 60000;          // 설명이 끝난 뒤 자유 채팅 1분
@@ -86,6 +88,11 @@ function createRoom(options) {
   const random = opts.random || Math.random;
 
   const players = new Map(); // playerId -> { id, token, nickname, connected, joinedAt }
+  const dropTimers = new Map();
+  const moderation = createModeration({ players, now, setTimer, clearTimer,
+    onChange: () => changed(),
+    onKick: (id) => { leave(id); if (opts.onKick) opts.onKick(id); },
+  });
   const chat = [];
   // 대화마다 붙는 번호. 화면이 "새 글이 있는가"를 판단하는 데 쓴다.
   // 길이로만 판단하면 상한(CHAT_MAX)에 닿은 뒤로는 밀어내고 넣느라 길이가 그대로여서,
@@ -113,6 +120,11 @@ function createRoom(options) {
     if (phaseTimer === null) return;
     clearTimer(phaseTimer);
     phaseTimer = null;
+  }
+
+  function cancelDrop(id) {
+    if (dropTimers.has(id)) clearTimer(dropTimers.get(id));
+    dropTimers.delete(id);
   }
 
   function connectedPlayers() {
@@ -284,6 +296,7 @@ function createRoom(options) {
   // ───────────────────────────── 참가 / 접속 ─────────────────────────────
 
   function join(input) {
+    if (moderation.isBanned(input.token)) return { error: '강퇴되어 10분 동안 재입장할 수 없습니다.', kicked: true };
     // [L3] slice()는 UTF-16 기준이라 24번째가 이모지 중간이면 깨진 글자가 남는다.
     // 글자(코드 포인트) 단위로 자른다.
     const nickname = Array.from(String(input.nickname).trim()).slice(0, 24).join('');
@@ -296,6 +309,7 @@ function createRoom(options) {
       for (const player of players.values()) {
         if (player.token !== input.token) continue;
         if (player.connected) break; // 이미 쓰고 있는 자리 - 새 참가자로 들어간다
+        cancelDrop(player.id);
         player.connected = true;
         if (phase === 'lobby' || phase === 'result') player.nickname = uniqueNickname(nickname, player.id);
         changed();
@@ -309,7 +323,7 @@ function createRoom(options) {
       if (seat && !players.has(seat.id)) {
         const revived = {
           id: seat.id, token: input.token, nickname: seat.nickname,
-          connected: true, joinedAt: now(),
+          connected: true, spectator: false, joinedAt: now(),
         };
         players.set(revived.id, revived);
         changed();
@@ -320,7 +334,10 @@ function createRoom(options) {
     // 여기까지 왔으면 새로 들어오는 사람이다(위의 재접속·자리 복구는 이미 지났다).
     // 정원은 새 참가자에게만 건다. 돌아오는 사람까지 막으면 잠깐 튕긴 사람이 자기 자리를
     // 잃어버린다.
-    if (players.size >= MAX_PLAYERS) {
+    const spectator = input.spectator === true;
+    const count = [...players.values()].filter((p) => !!p.spectator === spectator).length;
+    if (spectator && count >= MAX_SPECTATORS) return { error: `관전 정원이 찼습니다. (최대 ${MAX_SPECTATORS}명)` };
+    if (!spectator && count >= MAX_PLAYERS) {
       return { error: `방이 가득 찼습니다. (최대 ${MAX_PLAYERS}명)` };
     }
 
@@ -328,6 +345,7 @@ function createRoom(options) {
       id: crypto.randomUUID().slice(0, 8),
       token: crypto.randomBytes(16).toString('hex'),
       nickname: uniqueNickname(nickname, null),
+      spectator,
       connected: true,
       joinedAt: now(),
     };
@@ -341,20 +359,24 @@ function createRoom(options) {
     const player = players.get(playerId);
     if (!player || !player.connected) return;
     player.connected = false;
+    moderation.depart(playerId);
+    cancelDrop(playerId);
 
     // [W-1] 목록에서 지우는 타이머는 언제나 건다. 예전에는 로비에서만 걸어서, 라운드 중에
     // 끊긴 사람이 영영 유령으로 남았다. 어느 단계든 10초만 기다린다.
-    setTimer(() => {
+    dropTimers.set(playerId, setTimer(() => {
+      dropTimers.delete(playerId);
       const still = players.get(playerId);
       if (!still || still.connected) return;
       players.delete(playerId);
+      moderation.depart(playerId);
       forgetFromRound(playerId);
       // 이 사람이 마지막이었을 수도, 라이어였을 수도 있다.
       if (resetIfEmpty()) { changed(); return; }
       if (endRoundIfLiarGone() || abandonRoundIfAlone()) { changed(); return; }
       if (phase === 'voting') maybeTally();
       else changed();
-    }, DROP_MS);
+    }, DROP_MS));
 
     if (abandonRoundIfAlone()) { changed(); return; }
 
@@ -376,7 +398,9 @@ function createRoom(options) {
   function leave(playerId) {
     const player = players.get(playerId);
     if (!player) return;
+    cancelDrop(playerId);
     players.delete(playerId);
+    moderation.depart(playerId);
     // 자리를 버린 것이므로 되찾을 기록도 지운다. 남겨 두면 다시 들어올 때 되살아난다.
     if (round) round.seats.delete(player.token);
     forgetFromRound(playerId);
@@ -397,9 +421,26 @@ function createRoom(options) {
 
   // ───────────────────────────── 라운드 진행 ─────────────────────────────
 
-  function start() {
+  function setMode(playerId, spectator) {
+    const player = players.get(playerId);
+    if (!player || !player.connected) return '참가자가 아닙니다.';
+    if (inRound(playerId)) return '진행 중인 라운드가 끝난 뒤 전환할 수 있습니다.';
+    if (player.spectator === spectator) return null;
+    const count = [...players.values()].filter((p) => !!p.spectator === spectator).length;
+    if (count >= (spectator ? MAX_SPECTATORS : MAX_PLAYERS)) return '선택한 모드의 정원이 찼습니다.';
+    player.spectator = spectator;
+    moderation.depart(playerId);
+    changed();
+    return null;
+  }
+
+  function start(playerId) {
+    if (playerId !== undefined) {
+      const player = players.get(playerId);
+      if (!player || !player.connected || player.spectator) return '게임 참가자만 시작할 수 있습니다.';
+    }
     if (phase !== 'lobby' && phase !== 'result') return '이미 게임이 진행 중입니다.';
-    const roster = connectedPlayers();
+    const roster = connectedPlayers().filter((p) => !p.spectator);
     if (roster.length < MIN_PLAYERS) {
       return `게임을 시작하려면 최소 ${MIN_PLAYERS}명이 필요합니다. (현재 ${roster.length}명)`;
     }
@@ -721,7 +762,9 @@ function createRoom(options) {
     let disagree = 0;
     // 자유 채팅 시간이 다 되면 찬반 없이 곧바로 투표로 간다. 그때는 셀 것이 없다.
     if (!round || !round.proposal) return { agree: 0, disagree: 0, total: activeRoster().length };
-    for (const yes of round.proposal.answers.values()) {
+    for (const player of activeRoster()) {
+      if (!round.proposal.answers.has(player.id)) continue;
+      const yes = round.proposal.answers.get(player.id);
       if (yes) agree += 1; else disagree += 1;
     }
     return { agree, disagree, total: activeRoster().length };
@@ -837,7 +880,11 @@ function createRoom(options) {
     }
 
     const counts = new Map();
-    for (const targetId of round.votes.values()) counts.set(targetId, (counts.get(targetId) || 0) + 1);
+    for (const player of activeRoster()) {
+      const targetId = round.votes.get(player.id);
+      if (targetId && players.has(targetId)) counts.set(targetId, (counts.get(targetId) || 0) + 1);
+    }
+    if (counts.size === 0) { finish('liar', 'noVotes'); return; }
 
     let top = [];
     let max = 0;
@@ -915,10 +962,15 @@ function createRoom(options) {
       phase,
       minPlayers: MIN_PLAYERS,
       maxPlayers: MAX_PLAYERS,
+      maxSpectators: MAX_SPECTATORS,
+      moderation: moderation.stateFor(playerId),
       serverTime: now(), // 클라이언트 시계가 어긋나 있어도 남은 시간을 정확히 세도록
       you: me ? {
         id: me.id,
         nickname: me.nickname,
+        spectator: !!me.spectator,
+        canChangeMode: !iAmIn,
+        canKick: me.connected && !me.spectator,
         inRound: iAmIn,
         // 라이어에게는 제시어를 절대 내려보내지 않는다. 브라우저에서 가려지는 게 아니라
         // 애초에 전송되지 않는다.
@@ -938,6 +990,7 @@ function createRoom(options) {
         id: p.id,
         nickname: p.nickname,
         connected: p.connected,
+        spectator: !!p.spectator,
         inRound: inRound(p.id),
         // 누가 아직 안 던졌는지만 보인다. 누구에게 던졌는지는 보이지 않는다.
         voted: phase === 'voting' && !!round && round.votes.has(p.id),
@@ -974,11 +1027,17 @@ function createRoom(options) {
       result,
       record,
       chat,
-      canStart: (phase === 'lobby' || phase === 'result') && connectedPlayers().length >= MIN_PLAYERS,
+      canStart: (!me || !me.spectator) && (phase === 'lobby' || phase === 'result') && connectedPlayers().filter((p) => !p.spectator).length >= MIN_PLAYERS,
     };
   }
 
   return {
+    dispose() {
+      clearPhaseTimer();
+      for (const id of dropTimers.keys()) cancelDrop(id);
+      moderation.dispose();
+    },
+    setMode, requestKick: moderation.request, voteKick: moderation.vote,
     join, disconnect, leave, start, say, callVote, respondProposal, vote, guess, stateFor,
     playerIds: () => [...players.keys()],
     // 테스트에서 들여다보기 위한 것. 서버는 쓰지 않는다.

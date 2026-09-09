@@ -6,6 +6,8 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const suites = [
+  'moderation-test.js',                   // 관전·강퇴 및 재접속 회귀
+  'moderation-ui-test.js',                // 같은 브라우저 탭의 세션 분리와 강퇴 흐름
   'web-room-test.js', 'web-ui-test.js',    // 게임 규칙과 화면 (웹·Electron 공용)
   'play-test.js',                          // 5명이 한 판을 끝까지 (사람이 하듯)
   'restart-test.js',                       // 판이 끝나거나 끊긴 뒤 다시 시작되는지

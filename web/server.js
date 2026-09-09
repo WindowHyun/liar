@@ -33,7 +33,7 @@ process.on('unhandledRejection', (reason) => {
   error(`[처리되지 않은 실패] ${reason && reason.stack ? reason.stack : reason}`);
 });
 
-const server = createGameServer({ port: PORT });
+const server = createGameServer({ port: PORT, allowedOrigins: (process.env.LIAR_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean) });
 
 server.start().then(() => {
   log(`[시작] 웹 서버 실행 중 (포트 ${PORT})`);

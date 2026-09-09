@@ -281,3 +281,16 @@ input:disabled { opacity:.5; }
 /* 나를 부른 말은 줄 전체를 노랗게 - 대화가 빠를 때 그냥 지나치지 않도록 */
 .msg.mentions-me { background:#EEF5FC; border-left:3px solid #1264A3; border-radius:0 6px 6px 0; margin-left:-13px; padding:9px 10px 9px 10px; }
 .msg.mentions-me .mention { background:#D6E7F7; }
+
+/* Spectating and room moderation */
+.spectator-choice { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 12px; }
+#spectator-input { width: auto; margin: 0; }
+#join-error { color: #a52323; }
+#mode-btn { display: block; width: 100%; margin-bottom: 8px; padding: 6px; border: 1px solid #927296; border-radius: 6px; color: #fff; background: transparent; cursor: pointer; }
+#mode-btn:disabled { opacity: .5; cursor: default; }
+.kick-button { flex-shrink: 0; font-size: 10px; padding: 3px 4px; margin-left: auto; white-space: nowrap; border: 1px solid #927296; border-radius: 4px; background: transparent; color: #e4cde8; cursor: pointer; }
+#participant-list { min-height: 0; overflow-y: auto; }
+#moderation-panel { padding: 10px 16px; background: #fff4df; border-bottom: 1px solid #e1c99e; color: #432d15; }
+#moderation-panel p { margin: 0 0 6px; }
+#moderation-panel button { margin-right: 8px; padding: 6px 10px; }
+#moderation-panel button[aria-pressed="true"] { outline: 2px solid #1264a3; }
