@@ -182,8 +182,7 @@ function createGameServer(options) {
       // 정원이 찬 경우. 자리를 잡지 못했으므로 playerId를 붙이지 않는다.
       if (joined.error) {
         warn(`[참가 거절] ${joined.error}`);
-        sendTo(ws, { type: joined.kicked ? 'kicked' : 'error', message: joined.error });
-        if (joined.kicked) { client.kicked = true; ws.close(4003, 'kicked'); }
+        sendTo(ws, { type: 'error', message: joined.error });
         return;
       }
       client.playerId = joined.playerId;
@@ -253,7 +252,7 @@ function createGameServer(options) {
             if (client.playerId !== id) continue;
             client.playerId = null;
             client.kicked = true;
-            sendTo(client.ws, { type: 'kicked', message: '다수결로 강퇴되었습니다. 10분 동안 재입장할 수 없습니다.' });
+            sendTo(client.ws, { type: 'kicked', message: '다수결로 방에서 퇴장되었습니다. 접속 버튼을 누르면 바로 다시 입장할 수 있습니다.' });
             client.ws.close(4003, 'kicked');
           }
         },

@@ -2,13 +2,11 @@
 
 const crypto = require('crypto');
 const VOTE_MS = 30000;
-const BAN_MS = 10 * 60 * 1000;
 
 function createModeration({ players, now, setTimer, clearTimer, onChange, onKick }) {
   let proposal = null;
   let timer = null;
   let result = null;
-  const bans = new Map();
   const cooldowns = new Map();
   const eligible = (id) => {
     const p = players.get(id);
@@ -22,7 +20,7 @@ function createModeration({ players, now, setTimer, clearTimer, onChange, onKick
     result = { id: previous.id, passed, message };
     if (passed) {
       const target = players.get(previous.targetId);
-      if (target) { bans.set(target.token, now() + BAN_MS); onKick(target.id); }
+      if (target) onKick(target.id);
     }
     onChange();
   }
@@ -67,12 +65,15 @@ function createModeration({ players, now, setTimer, clearTimer, onChange, onKick
     // Keep the initial threshold. Leaving must never make kicking easier.
     proposal.answers.delete(id);
   }
+  function reset() {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    proposal = null;
+    result = null;
+    cooldowns.clear();
+  }
   return {
-    request, vote, depart,
-    isBanned(token) {
-      for (const [key, until] of bans) if (until <= now()) bans.delete(key);
-      return bans.has(token);
-    },
+    request, vote, depart, reset,
     stateFor(id) {
       return { result, proposal: proposal ? {
         id: proposal.id, targetId: proposal.targetId, targetName: proposal.targetName,
@@ -81,7 +82,7 @@ function createModeration({ players, now, setTimer, clearTimer, onChange, onKick
         answer: proposal.answers.has(id) ? proposal.answers.get(id) : null,
       } : null };
     },
-    dispose() { if (timer !== null) clearTimer(timer); timer = null; proposal = null; bans.clear(); cooldowns.clear(); },
+    dispose: reset,
   };
 }
 

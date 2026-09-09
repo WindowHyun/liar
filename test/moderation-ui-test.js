@@ -66,11 +66,20 @@ async function main() {
     await a.waitForFunction((id) => !state.players.some((p) => p.id === id), ids[3]);
     assert.equal(await watcher.evaluate(() => joined), false);
     assert.equal(await watcher.evaluate(() => reconnectTimer), null);
-    await watcher.reload();
-    await watcher.waitForFunction(() => kicked === true);
-    assert.equal(await watcher.evaluate(() => readToken()), tokens[3]);
+    assert.equal(await watcher.isVisible('#screen-join'), true);
+    assert.equal(await watcher.inputValue('#nickname-input'), 'Watcher');
+    assert.equal(await watcher.evaluate(() => readToken()), null);
+    await watcher.click('#join-btn');
+    await watcher.waitForFunction((id) => state && state.you && state.you.id !== id, ids[3]);
+    assert.equal(await watcher.evaluate(() => kicked), false);
+    assert.notEqual(await watcher.evaluate(() => readToken()), tokens[3]);
+    assert.equal(await watcher.evaluate(() => state.you.inRound), false);
+    assert.equal(await watcher.isEnabled('#leave-btn'), true);
     assert.equal(await c.evaluate(() => state.phase), 'turn');
-    console.log('PASS majority kick removes target, stops automatic reconnect and denies banned token after reload');
+    await watcher.reload();
+    await watcher.waitForFunction(() => state && state.you);
+    assert.equal(await watcher.evaluate(() => kicked), false);
+    console.log('PASS kick returns to login without auto-join; immediate manual re-entry and reload work');
 
     await new Promise((resolve, reject) => {
       const socket = new WebSocket('ws://127.0.0.1:4198', { origin: 'http://203.0.113.1:8080' });

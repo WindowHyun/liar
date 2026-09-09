@@ -86,8 +86,8 @@ test('spectator capacity is separate and bounded; switching cannot overfill play
   assert.ok(r.join({ nickname: 'extra' }).error);
 });
 
-test('kick needs strict majority, excludes target and spectators, and revokes reconnect token', () => {
-  const { room: r, players: p, kicked, advance } = fixture(5);
+test('kick needs strict majority, excludes target and spectators, and allows immediate re-entry as a new participant', () => {
+  const { room: r, players: p, kicked } = fixture(5);
   const w = r.join({ nickname: 'Watcher', spectator: true });
   assert.ok(r.requestKick(w.playerId, p[4].playerId));
   assert.equal(r.requestKick(p[0].playerId, p[4].playerId), null);
@@ -102,9 +102,10 @@ test('kick needs strict majority, excludes target and spectators, and revokes re
   r.voteKick(p[2].playerId, vote.id, true);
   assert.deepEqual(kicked, [p[4].playerId]);
   assert.ok(!r.playerIds().includes(p[4].playerId));
-  assert.equal(r.join({ nickname: 'return', token: p[4].token }).kicked, true);
-  advance(600000);
-  assert.ok(r.join({ nickname: 'return', token: p[4].token }).playerId);
+  const returned = r.join({ nickname: 'return', token: p[4].token });
+  assert.ok(returned.playerId);
+  assert.notEqual(returned.playerId, p[4].playerId);
+  assert.notEqual(returned.token, p[4].token);
 });
 
 test('disconnects do not lower kick threshold; new arrivals cannot vote; timeout cleans proposal', () => {
@@ -140,6 +141,35 @@ test('majority NO rejects; proposal cooldown prevents immediate repeated harassm
   assert.ok(r.requestKick(p[0].playerId, p[3].playerId));
   advance(30000);
   assert.equal(r.requestKick(p[0].playerId, p[3].playerId), null);
+});
+
+for (const disconnect of [false, true]) {
+  test(`empty room clears kick history after ${disconnect ? 'disconnect grace' : 'explicit leave'}`, () => {
+    const { room: r, players: p, advance } = fixture(3);
+    r.requestKick(p[0].playerId, p[2].playerId);
+    r.voteKick(p[1].playerId, r.stateFor(p[0].playerId).moderation.proposal.id, true);
+    assert.equal(r.stateFor(p[0].playerId).moderation.result.passed, true);
+    for (const player of p.slice(0, 2)) {
+      if (disconnect) r.disconnect(player.playerId);
+      else r.leave(player.playerId);
+    }
+    if (disconnect) advance(10000);
+    const next = r.join({ nickname: 'New visitor' });
+    assert.deepEqual(r.stateFor(next.playerId).moderation, { result: null, proposal: null });
+    advance(30000);
+    assert.deepEqual(r.stateFor(next.playerId).moderation, { result: null, proposal: null });
+    r.dispose();
+  });
+}
+
+test('empty room cancels pending kick timer so it cannot publish a result in a new room', () => {
+  const { room: r, players: p, advance } = fixture(3);
+  r.requestKick(p[0].playerId, p[2].playerId);
+  for (const player of p) r.leave(player.playerId);
+  const next = r.join({ nickname: 'New visitor' });
+  advance(30000);
+  assert.deepEqual(r.stateFor(next.playerId).moderation, { result: null, proposal: null });
+  r.dispose();
 });
 
 test('kicking the liar finishes the round and dispose clears every timer', () => {
