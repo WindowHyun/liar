@@ -194,18 +194,14 @@ function connect() {
       return;
     }
     if (msg.type === 'kicked') {
-      kicked = true;
-      joined = false;
+      var previousName = myNickname;
       stopWatchdog();
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-      state = null;
-      $('role-card').classList.add('hidden');
-      $('live-block').innerHTML = '';
-      $('moderation-panel').classList.add('hidden');
-      Array.prototype.forEach.call(document.querySelectorAll('#screen-game button, #chat-input'), function (el) { el.disabled = true; });
+      resetRoomScreen();
+      kicked = true; // 자동 참가만 멈춘다. 사용자가 접속을 누르면 새 연결로 들어간다.
+      $('nickname-input').value = previousName;
+      $('spectator-input').checked = spectatorMode;
       $('join-error').textContent = msg.message;
-      showBanner('warn', msg.message + ' 10분 후 새로고침해 주세요.');
       return;
     }
     if (msg.type === 'error') {
@@ -306,6 +302,19 @@ $('join-btn').onclick = function () {
   $('join-error').textContent = '';
   joined = true;
   enterGameScreen();
+  if (kicked) {
+    // 이전 소켓의 늦은 close/state가 새 연결을 건드리지 않도록 분리한다.
+    if (ws) {
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      try { ws.close(); } catch (e) { /* already closed */ }
+      ws = null;
+    }
+    kicked = false;
+    connect(); // onopen에서 새 참가 요청을 보낸다.
+    return;
+  }
   sendMessage({ type: 'join', nickname: nickname, token: readToken(), spectator: spectatorMode });
 };
 
@@ -317,6 +326,10 @@ $('join-btn').onclick = function () {
 function leaveRoom() {
   if (kicked) return;
   sendMessage({ type: 'leave' });
+  resetRoomScreen();
+}
+
+function resetRoomScreen() {
   saveToken(null);
   clearStored(NAME_KEY);
   joined = false;
@@ -327,6 +340,9 @@ function leaveRoom() {
   lastNotifiedSeq = null;
   wasMyTurn = false;
   liveSignature = '';
+  moderationSignature = '';
+  $('moderation-panel').innerHTML = '';
+  $('moderation-panel').classList.add('hidden');
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   $('chat-messages').innerHTML = '';
   $('live-block').innerHTML = '';

@@ -186,6 +186,7 @@ function createRoom(options) {
    */
   function resetIfEmpty() {
     if (players.size > 0) return false;
+    moderation.reset();
     clearPhaseTimer();
     round = null;
     result = null;
@@ -296,7 +297,6 @@ function createRoom(options) {
   // ───────────────────────────── 참가 / 접속 ─────────────────────────────
 
   function join(input) {
-    if (moderation.isBanned(input.token)) return { error: '강퇴되어 10분 동안 재입장할 수 없습니다.', kicked: true };
     // [L3] slice()는 UTF-16 기준이라 24번째가 이모지 중간이면 깨진 글자가 남는다.
     // 글자(코드 포인트) 단위로 자른다.
     const nickname = Array.from(String(input.nickname).trim()).slice(0, 24).join('');
