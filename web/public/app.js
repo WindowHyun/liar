@@ -1143,6 +1143,8 @@ function metaGuess(s) { return '남은 시간 ' + secondsLeft(s.round.guessEndsA
 
 /** 남은 시간만 1초마다 갈아 끼운다. 블록 전체를 다시 그리면 입력 중인 글자가 날아간다. */
 function refreshLiveTimers(s) {
+  var kickMeta = $('kick-meta');
+  if (kickMeta && s.moderation && s.moderation.proposal) kickMeta.textContent = moderationMeta(s.moderation.proposal);
   var meta = $('live-meta');
   if (!meta || !s.round) return;
   if (s.phase === 'turn') meta.textContent = metaTurn(s);
@@ -1217,24 +1219,44 @@ function renderModeration(s) {
   panel.innerHTML = '';
   panel.classList.toggle('hidden', !data || (!data.proposal && (!data.result || data.result.passed)));
   if (!data) return;
-  var text = document.createElement('p');
-  if (!data.proposal) {
-    if (data.result && !data.result.passed) { text.textContent = data.result.message; panel.appendChild(text); }
+  var vote = data.proposal;
+  var shell = messageShell({ system: true, at: vote ? vote.endsAt - 30000 : null });
+  var text = document.createElement('div');
+  text.className = 'text';
+  if (!vote) {
+    if (data.result && !data.result.passed) {
+      text.textContent = data.result.message;
+      shell.body.appendChild(text);
+      panel.appendChild(shell);
+    }
     return;
   }
-  var vote = data.proposal;
-  text.textContent = vote.targetName + '님을 강퇴할까요? 찬성 ' + vote.agree + ' / 필요 ' + vote.required
-    + '명 (대상 제외 참가자 ' + vote.total + '명 기준, 30초 제한)';
-  panel.appendChild(text);
-  if (vote.canVote) {
-    ['yes', 'no'].forEach(function (answer) {
-      var button = document.createElement('button');
-      button.textContent = answer === 'yes' ? '강퇴 찬성' : '강퇴 반대';
-      button.setAttribute('data-kick-vote', answer);
-      button.setAttribute('aria-pressed', String(vote.answer === (answer === 'yes')));
-      panel.appendChild(button);
-    });
-  }
+  text.textContent = vote.targetName + '님을 강퇴할까요?';
+  shell.body.appendChild(text);
+  var chips = document.createElement('div');
+  chips.className = 'chips';
+  ['yes', 'no'].forEach(function (answer) {
+    var yes = answer === 'yes';
+    var button = chip(answer, yes ? '✅' : '❌', yes ? vote.agree : vote.disagree, vote.answer === yes);
+    button.removeAttribute('data-agree');
+    button.setAttribute('data-kick-vote', answer);
+    button.setAttribute('aria-label', yes ? '강퇴 찬성' : '강퇴 반대');
+    button.setAttribute('aria-pressed', String(vote.answer === yes));
+    button.disabled = !vote.canVote;
+    chips.appendChild(button);
+  });
+  shell.body.appendChild(chips);
+  var meta = document.createElement('p');
+  meta.id = 'kick-meta';
+  meta.className = 'meta-line';
+  meta.textContent = moderationMeta(vote);
+  shell.body.appendChild(meta);
+  panel.appendChild(shell);
+}
+
+function moderationMeta(vote) {
+  return '남은 시간 ' + secondsLeft(vote.endsAt) + '초 · 찬성 ' + vote.required
+    + '명 필요 (대상 제외 ' + vote.total + '명)';
 }
 
 function renderTally(s) {
@@ -1390,7 +1412,6 @@ function render(s) {
     spectatorMode = !!s.you.spectator;
     writeStored(MODE_KEY, String(spectatorMode));
   }
-  renderModeration(s);
   state = s;
   if (s.you) myId = s.you.id;
 
@@ -1408,6 +1429,7 @@ function render(s) {
     renderRoleCard(s);
     renderChat(s);
     renderLive(s);
+    renderModeration(s);
   } catch (err) {
     // 조용히 삼키지 않는다. 화면은 계속 쓸 수 있게 두되, 원인은 남긴다.
     console.error('화면을 그리는 중 문제가 생겼습니다:', err);
@@ -1436,7 +1458,7 @@ function render(s) {
   if (wasAtBottom) scrollChatToBottom();
 
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  if (s.phase !== 'lobby' && s.phase !== 'result') {
+  if ((s.phase !== 'lobby' && s.phase !== 'result') || (s.moderation && s.moderation.proposal)) {
     tickTimer = setInterval(function () { if (state) refreshLiveTimers(state); }, 1000);
   }
   updateJumpBar();
