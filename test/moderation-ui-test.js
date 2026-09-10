@@ -37,11 +37,8 @@ async function main() {
     assert.equal(await a.evaluate(() => readToken()), tokens[0]);
     assert.equal(await a.evaluate(() => state.you.nickname), 'Alpha');
     assert.equal(await watcher.isDisabled('#start-btn'), true);
-    await watcher.click('#mode-btn');
-    await watcher.waitForFunction(() => state.you.spectator === false);
-    await watcher.click('#mode-btn');
-    await watcher.waitForFunction(() => state.you.spectator === true);
-    console.log('PASS shared-context tabs retain independent identities after reload; spectator toggle works');
+    assert.equal(await watcher.locator('#mode-btn').count(), 0);
+    console.log('PASS shared-context tabs retain independent identities after reload; mode selection is only on the join screen');
 
     // Repeat join on an established connection must not cancel the round or orphan a seat.
     await a.click('#start-btn');
@@ -51,19 +48,28 @@ async function main() {
     assert.equal(await watcher.evaluate(() => state.you.inRound), false);
     assert.equal(await watcher.locator('#participant-list button[data-kick]').count(), 0);
     assert.equal(await watcher.isDisabled('#chat-input'), true);
-    assert.equal(await a.isDisabled('#mode-btn'), true);
+    assert.equal(await a.locator('#mode-btn').count(), 0);
     await a.evaluate(() => sendMessage({ type: 'join', nickname: 'again', token: readToken() }));
     await a.waitForFunction(() => document.getElementById('banner').textContent.includes('이미 참가'));
     assert.equal(await a.evaluate(() => state.phase), 'turn');
     console.log('PASS spectator has no role/chat/game controls; duplicate join preserves active round');
 
     // Kick a spectator: 3 eligible players => 2 YES needed (initiator counts once).
-    await a.click(`button[data-kick="${ids[3]}"]`);
+    assert.equal(await a.locator('#participant-list button[data-kick]').count(), 0);
+    await a.locator('[data-player-id="' + ids[3] + '"] .p-avatar').click({ button: 'right' });
+    await a.keyboard.press('Escape');
+    assert.equal(await a.isVisible('#profile-menu'), false);
+    await a.locator('[data-player-id="' + ids[3] + '"] .p-avatar').click({ button: 'right' });
+    await a.click('#profile-menu button[data-kick]');
     await b.waitForSelector('#moderation-panel button[data-kick-vote="yes"]');
     assert.equal(await b.evaluate(() => state.moderation.proposal.required), 2);
     await b.click('#moderation-panel button[data-kick-vote="yes"]');
     await watcher.waitForFunction(() => kicked === true);
     await a.waitForFunction((id) => !state.players.some((p) => p.id === id), ids[3]);
+    await a.waitForFunction(() => state.chat.some((m) => m.kind === 'system' && m.code === 'kicked'));
+    assert.equal(await a.isVisible('#moderation-panel'), false);
+    assert.match(await a.locator('#chat-messages').innerText(), /Watcher.*강퇴/);
+    assert.equal(await a.evaluate(() => state.chat.filter((m) => m.code === 'kicked').length), 1);
     assert.equal(await watcher.evaluate(() => joined), false);
     assert.equal(await watcher.evaluate(() => reconnectTimer), null);
     assert.equal(await watcher.isVisible('#screen-join'), true);

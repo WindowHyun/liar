@@ -356,13 +356,35 @@ function resetRoomScreen() {
 }
 
 $('leave-btn').onclick = leaveRoom;
-$('mode-btn').onclick = function () {
-  if (state && state.you) sendMessage({ type: 'mode', spectator: !state.you.spectator });
-};
-$('participant-list').addEventListener('click', function (ev) {
-  var button = ev.target.closest('button[data-kick]');
-  if (button) sendMessage({ type: 'kick', targetId: button.getAttribute('data-kick') });
+var profileMenu = document.createElement('div');
+profileMenu.id = 'profile-menu';
+profileMenu.className = 'hidden';
+profileMenu.setAttribute('role', 'menu');
+document.body.appendChild(profileMenu);
+function closeProfileMenu() { profileMenu.classList.add('hidden'); profileMenu.innerHTML = ''; }
+$('participant-list').addEventListener('contextmenu', function (ev) {
+  closeProfileMenu();
+  var profile = ev.target.closest('[data-player-id]');
+  if (!profile || !state || !state.you || !state.you.canKick) return;
+  var target = state.players.find(function (p) { return p.id === profile.getAttribute('data-player-id'); });
+  if (!target || !target.connected || target.id === myId) return;
+  ev.preventDefault();
+  var button = document.createElement('button');
+  button.textContent = '강퇴 제안';
+  button.setAttribute('role', 'menuitem');
+  button.setAttribute('data-kick', target.id);
+  button.disabled = !!(state.moderation && state.moderation.proposal);
+  button.onclick = function () { sendMessage({ type: 'kick', targetId: target.id }); closeProfileMenu(); };
+  profileMenu.appendChild(button);
+  profileMenu.classList.remove('hidden');
+  profileMenu.style.left = Math.max(0, Math.min(ev.clientX, window.innerWidth - profileMenu.offsetWidth)) + 'px';
+  profileMenu.style.top = Math.max(0, Math.min(ev.clientY, window.innerHeight - profileMenu.offsetHeight)) + 'px';
+  button.focus();
 });
+document.addEventListener('click', function (ev) { if (!profileMenu.contains(ev.target)) closeProfileMenu(); });
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeProfileMenu(); });
+window.addEventListener('resize', closeProfileMenu);
+document.addEventListener('scroll', closeProfileMenu, true);
 $('moderation-panel').addEventListener('click', function (ev) {
   var button = ev.target.closest('button[data-kick-vote]');
   if (button && state && state.moderation && state.moderation.proposal) {
@@ -1131,6 +1153,7 @@ function refreshLiveTimers(s) {
 }
 
 function renderParticipants(s) {
+  closeProfileMenu();
   var list = $('participant-list');
   list.innerHTML = '';
   var online = s.players.filter(function (p) { return p.connected; }).length;
@@ -1138,6 +1161,7 @@ function renderParticipants(s) {
 
   s.players.forEach(function (p) {
     var li = document.createElement('li');
+    li.setAttribute('data-player-id', p.id);
     if (!p.connected) li.className = 'offline';
     else if (p.spectator || (s.phase !== 'lobby' && s.phase !== 'result' && !p.inRound)) li.className = 'spectator';
 
@@ -1179,15 +1203,6 @@ function renderParticipants(s) {
       tag.textContent = tagText;
       li.appendChild(tag);
     }
-    if (s.you && s.you.canKick && p.connected && p.id !== myId) {
-      var kick = document.createElement('button');
-      kick.className = 'kick-button';
-      kick.textContent = '강퇴 제안';
-      kick.setAttribute('data-kick', p.id);
-      kick.setAttribute('aria-label', p.nickname + ' 강퇴 제안');
-      kick.disabled = !!(s.moderation && s.moderation.proposal);
-      li.appendChild(kick);
-    }
     list.appendChild(li);
   });
 }
@@ -1200,11 +1215,11 @@ function renderModeration(s) {
   if (signature === moderationSignature) return;
   moderationSignature = signature;
   panel.innerHTML = '';
-  panel.classList.toggle('hidden', !data || (!data.proposal && !data.result));
+  panel.classList.toggle('hidden', !data || (!data.proposal && (!data.result || data.result.passed)));
   if (!data) return;
   var text = document.createElement('p');
   if (!data.proposal) {
-    if (data.result) { text.textContent = data.result.message; panel.appendChild(text); }
+    if (data.result && !data.result.passed) { text.textContent = data.result.message; panel.appendChild(text); }
     return;
   }
   var vote = data.proposal;
@@ -1374,8 +1389,6 @@ function render(s) {
   if (s.you) {
     spectatorMode = !!s.you.spectator;
     writeStored(MODE_KEY, String(spectatorMode));
-    $('mode-btn').textContent = spectatorMode ? '게임 참가로 전환' : '관전으로 전환';
-    $('mode-btn').disabled = !s.you.canChangeMode;
   }
   renderModeration(s);
   state = s;

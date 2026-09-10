@@ -294,3 +294,8 @@ input:disabled { opacity:.5; }
 #moderation-panel p { margin: 0 0 6px; }
 #moderation-panel button { margin-right: 8px; padding: 6px 10px; }
 #moderation-panel button[aria-pressed="true"] { outline: 2px solid #1264a3; }
+
+#profile-menu { position: fixed; z-index: 1000; padding: 4px; border: 1px solid #ddd; border-radius: 6px; background: white; box-shadow: 0 4px 16px #0003; }
+#profile-menu button { padding: 8px 16px; border: 0; background: white; color: #a32020; cursor: pointer; }
+#profile-menu button:hover { background: #f5f5f5; }
+#profile-menu button:disabled { color: #999; cursor: default; }
