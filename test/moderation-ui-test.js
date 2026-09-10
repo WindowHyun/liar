@@ -63,6 +63,10 @@ async function main() {
     await a.click('#profile-menu button[data-kick]');
     await b.waitForSelector('#moderation-panel button[data-kick-vote="yes"]');
     assert.equal(await b.evaluate(() => state.moderation.proposal.required), 2);
+    assert.equal(await b.locator('#chat #moderation-panel .chips .chip').count(), 2);
+    assert.match(await b.locator('#kick-meta').innerText(), /남은 시간.*찬성 2명 필요/);
+    assert.equal(await watcher.locator('#moderation-panel button[data-kick-vote="yes"]').isDisabled(), true);
+    assert.equal(await a.locator('#moderation-panel button[data-kick-vote="yes"]').getAttribute('aria-pressed'), 'true');
     await b.click('#moderation-panel button[data-kick-vote="yes"]');
     await watcher.waitForFunction(() => kicked === true);
     await a.waitForFunction((id) => !state.players.some((p) => p.id === id), ids[3]);
