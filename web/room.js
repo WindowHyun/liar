@@ -91,7 +91,11 @@ function createRoom(options) {
   const dropTimers = new Map();
   const moderation = createModeration({ players, now, setTimer, clearTimer,
     onChange: () => changed(),
-    onKick: (id) => { leave(id); if (opts.onKick) opts.onKick(id); },
+    onKick: (id) => {
+      pushChat({ kind: 'system', code: 'kicked', text: `${nameOf(id)}님이 다수결로 강퇴되었습니다.`, at: now() });
+      leave(id);
+      if (opts.onKick) opts.onKick(id);
+    },
   });
   const chat = [];
   // 대화마다 붙는 번호. 화면이 "새 글이 있는가"를 판단하는 데 쓴다.
